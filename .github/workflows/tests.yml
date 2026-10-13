@@ -72,4 +72,7 @@ jobs:
         run: uv sync --extra test
 
       - name: Run tests
-        run: uv run pytest -q
+        # Explicitly target tests/: the workspace also contains the HiGHS
+        # source checkout and the pinned engine checkout, both with test
+        # files that would otherwise be collected.
+        run: uv run pytest tests -q
