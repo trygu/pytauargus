@@ -1,0 +1,10 @@
+.venv/
+build/
+dist/
+*.log
+__pycache__/
+*.pyc
+*.DS_Store
+.pytest_cache/
+# TUI workspace manifests (runtime artifacts written next to a .arb)
+*.workspace.json
