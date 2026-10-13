@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pytauargus-tui"
+version = "0.5.2"
+description = "Textual terminal UI for Tau-Argus — a thin view over the pytauargus engine"
+requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "EUPL-1.2" }
+keywords = ["statistical disclosure control", "SDC", "TUI", "textual", "terminal"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "pytauargus>=0.5.2",
+    "textual>=0.50",
+]
+
+# Same-repo dev: resolve pytauargus from the parent package (editable)
+# so the TUI follows the in-tree engine instead of a frozen PyPI snapshot.
+# Editable keeps the URL consistent when pytauargus's own lock includes the
+# TUI via the `tui` extra (the root project is editable there too).
+# Precondition: the pinned engine checkout's superbuild output
+# (engine/build/lib) must exist (sync-venv.sh builds it if needed).
+# Published wheels are unaffected — hatchling only reads [project], so PyPI
+# metadata keeps the plain version range.
+[tool.uv.sources]
+pytauargus = { path = "..", editable = true }
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-asyncio"]
+
+[project.urls]
+Homepage = "https://github.com/trygu/pytauargus"
+Repository = "https://github.com/trygu/pytauargus"
+Issues = "https://github.com/trygu/pytauargus/issues"
+
+[project.scripts]
+tauargus-tui = "pytauargus_tui.app:main"
+# Alias named after the package so `uvx pytauargus-tui` finds an executable.
+pytauargus-tui = "pytauargus_tui.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pytauargus_tui"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

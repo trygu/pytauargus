@@ -1,0 +1,472 @@
+# Build self-contained cross-platform wheels for pytauargus and publish
+# them as GitHub Release assets (and, on tag, optionally to PyPI).
+#
+# Why a manual matrix instead of cibuildwheel: the Python build links
+# against a pre-built engine. The engine and the _tauargus extension it
+# feeds come from the pinned tauargus-engine checkout (tauargus-engine-rev,
+# checked out at ./tauargus-engine). cibuildwheel copies only the package
+# dir into its container and would not see it.
+#
+# Each build job:
+#   1. checks out the pinned tauargus-engine (submodules recursive),
+#   2. builds HiGHS from source (version-pinned, cached),
+#   3. builds the tauargus engine superbuild (cached),
+#   4. builds the pytauargus wheel for one CPython via `pip wheel`,
+#   5. repairs the wheel so HiGHS + engine libs are bundled
+#      (delocate / auditwheel / delvewheel) -> self-contained wheel,
+#   6. uploads it as an artifact.
+#
+# The release job (on tag) aggregates the artifacts into a GitHub Release
+# and, if a PyPI token is configured, publishes there too. The image job then
+# builds a multi-arch (amd64/arm64) container image from the Linux wheels and pushes it to GHCR.
+
+name: wheels
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["py-v*"]
+
+concurrency:
+  group: wheels-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HIGHS_TAG: v1.15.1
+
+# ---------------------------------------------------------------------------
+# Shared build recipe, inlined per job (GitHub Actions has no job-level
+# function inclusion). Keep the three copies in sync.
+# ---------------------------------------------------------------------------
+
+jobs:
+  build-macos:
+    name: macos-arm64 py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read engine pin
+        run: echo "ENGINE_REV=$(tr -d '[:space:]' < tauargus-engine-rev)" >> "$GITHUB_ENV"
+
+      - name: Checkout pinned tauargus-engine
+        uses: actions/checkout@v4
+        with:
+          repository: trygu/tauargus-engine
+          ref: ${{ env.ENGINE_REV }}
+          path: tauargus-engine
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Build HiGHS from source (cached)
+        id: highs
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREFIX="$RUNNER_TEMP/highs-prefix"
+          if [ -f "$PREFIX/.done" ]; then
+            echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git clone --depth 1 --branch "$HIGHS_TAG" \
+            https://github.com/ERGO-Code/HiGHS.git highs
+          cmake -S highs -B highs/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            -DCMAKE_INSTALL_PREFIX="$PREFIX"
+          cmake --build highs/build -j
+          cmake --install highs/build
+          touch "$PREFIX/.done"
+          echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
+
+      - name: Build engine superbuild (cached)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "tauargus-engine/engine/build/.done" ]; then
+            echo "engine already built"
+            exit 0
+          fi
+          cmake -S tauargus-engine/engine -B tauargus-engine/engine/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DHighs_DIR="${{ steps.highs.outputs.prefix }}/lib/cmake/Highs"
+          cmake --build engine/build -j
+          touch tauargus-engine/engine/build/.done
+
+      - name: Build wheel
+        shell: bash
+        env:
+          TAUARGUS_ENGINE_DIR: ${{ github.workspace }}/tauargus-engine
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install "scikit-build-core>=0.10" "pybind11>=2.13"
+          python -m pip wheel . --no-deps -w wheelhouse
+
+      - name: Repair wheel (bundle HiGHS + engine libs)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install delocate
+          delocate-listdeps wheelhouse/*.whl || true
+          delocate-wheel -w repaired wheelhouse/*.whl
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytauargus-macos-arm64-py${{ matrix.python }}
+          path: repaired/*.whl
+          if-no-files-found: error
+
+  build-linux:
+    name: manylinux2028 ${{ matrix.arch }} py${{ matrix.python }}
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: quay.io/pypa/manylinux_2_28_${{ matrix.arch }}:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["cp310-cp310", "cp311-cp311", "cp312-cp312", "cp313-cp313", "cp314-cp314", "cp315-cp315"]
+        arch: [x86_64, aarch64]
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read engine pin
+        run: echo "ENGINE_REV=$(tr -d '[:space:]' < tauargus-engine-rev)" >> "$GITHUB_ENV"
+
+      - name: Checkout pinned tauargus-engine
+        uses: actions/checkout@v4
+        with:
+          repository: trygu/tauargus-engine
+          ref: ${{ env.ENGINE_REV }}
+          path: tauargus-engine
+          submodules: recursive
+
+      - name: Toolchain (cmake/ninja/auditwheel)
+        run: /opt/python/${{ matrix.python }}/bin/pip install cmake ninja "auditwheel>=6" "scikit-build-core>=0.10" "pybind11>=2.13"
+
+      - name: Build HiGHS from source
+        id: highs
+        run: |
+          set -euo pipefail
+          PREFIX="$GITHUB_WORKSPACE/highs-prefix"
+          git clone --depth 1 --branch "$HIGHS_TAG" \
+            https://github.com/ERGO-Code/HiGHS.git highs
+          cmake -S highs -B highs/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+            -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+          cmake --build highs/build -j
+          cmake --install highs/build
+          echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
+
+      - name: Build engine superbuild
+        run: |
+          set -euo pipefail
+          cmake -S tauargus-engine/engine -B tauargus-engine/engine/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DHighs_DIR="$(dirname "$(find "${{ steps.highs.outputs.prefix }}" -name "[Hh]ighs[Cc]onfig.cmake" -o -name highs-config.cmake | head -n1)")"
+          cmake --build engine/build -j
+
+      - name: Build wheel
+        run: |
+          set -euo pipefail
+          /opt/python/${{ matrix.python }}/bin/pip wheel \
+            . --no-deps -w wheelhouse
+
+      - name: Repair wheel (bundle HiGHS + engine libs)
+        run: |
+          set -euo pipefail
+          auditwheel repair wheelhouse/*.whl -w repaired
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytauargus-manylinux-${{ matrix.arch }}-py${{ matrix.python }}
+          path: repaired/*.whl
+          if-no-files-found: error
+
+  build-windows:
+    name: windows py${{ matrix.python }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read engine pin
+        run: echo "ENGINE_REV=$(tr -d '[:space:]' < tauargus-engine-rev)" >> "$GITHUB_ENV"
+
+      - name: Checkout pinned tauargus-engine
+        uses: actions/checkout@v4
+        with:
+          repository: trygu/tauargus-engine
+          ref: ${{ env.ENGINE_REV }}
+          path: tauargus-engine
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Build HiGHS from source (cached)
+        id: highs
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREFIX="$RUNNER_TEMP/highs-prefix"
+          if [ -f "$PREFIX/.done" ]; then
+            echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git clone --depth 1 --branch "$HIGHS_TAG" \
+            https://github.com/ERGO-Code/HiGHS.git highs
+          cmake -S highs -B highs/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            -DCMAKE_INSTALL_PREFIX="$PREFIX"
+          cmake --build highs/build -j --config Release
+          cmake --install highs/build --config Release
+          touch "$PREFIX/.done"
+          echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
+
+      - name: Build engine superbuild (cached)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "tauargus-engine/engine/build/.done" ]; then
+            echo "engine already built"
+            exit 0
+          fi
+          cmake -S tauargus-engine/engine -B tauargus-engine/engine/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DHighs_DIR="$(dirname "$(find "${{ steps.highs.outputs.prefix }}" -name "[Hh]ighs[Cc]onfig.cmake" -o -name highs-config.cmake | head -n1)")"
+          cmake --build engine/build -j --config Release
+          touch tauargus-engine/engine/build/.done
+
+      - name: Build wheel
+        shell: bash
+        env:
+          TAUARGUS_ENGINE_DIR: ${{ github.workspace }}/tauargus-engine
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install "scikit-build-core>=0.10" "pybind11>=2.13"
+          python -m pip wheel . --no-deps -w wheelhouse
+
+      - name: Repair wheel (bundle HiGHS + engine DLLs)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install delvewheel
+          ENGINE_BIN="$(cygpath -w "$GITHUB_WORKSPACE/tauargus-engine/engine/build/bin/Release")"
+          HIGHS_BIN="$(cygpath -w "$RUNNER_TEMP/highs-prefix/bin")"
+          delvewheel repair --add-path "$ENGINE_BIN;$HIGHS_BIN" -w repaired wheelhouse/*.whl
+
+      - name: Smoke test wheel in a clean venv
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/smoke"
+          "$RUNNER_TEMP/smoke/Scripts/python.exe" -m pip install repaired/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/smoke/Scripts/tauargus.exe" --version
+          "$RUNNER_TEMP/smoke/Scripts/python.exe" -c "import pytauargus, pytauargus._tauargus as m; print('ok', m.__file__)"
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytauargus-windows-py${{ matrix.python }}
+          path: repaired/*.whl
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # pytauargus-tui: pure Python -> one universal wheel (no HiGHS/superbuild).
+  # Released in lockstep with pytauargus (same version, same py-v* trigger).
+  # ---------------------------------------------------------------------------
+  build-tui:
+    name: build pytauargus-tui wheel
+    runs-on: ubuntu-24.04
+    # The smoke test verifies the TUI wheel against the pytauargus wheel
+    # built in THIS run (not the last published one on PyPI), so this job
+    # waits for the linux build to produce the reference wheel.
+    needs: [build-linux]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download reference engine wheel (this run)
+        uses: actions/download-artifact@v4
+        with:
+          name: pytauargus-manylinux-x86_64-pycp312-cp312
+          path: refengine
+
+      - name: Build wheel
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip wheel tui --no-deps -w dist
+
+      - name: Show wheel
+        run: ls -la dist
+
+      - name: Smoke test (clean venv; verify pytauargus is pulled in)
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/smoke"
+          "$RUNNER_TEMP/smoke/bin/pip" install --upgrade pip
+          # Install the pytauargus wheel built in this run alongside the TUI
+          # wheel, so the dependency resolves against the engine that ships
+          # with this release (PyPI may not have that version yet).
+          "$RUNNER_TEMP/smoke/bin/pip" install refengine/*.whl dist/*.whl
+          echo "--- resolved pytauargus ---"
+          "$RUNNER_TEMP/smoke/bin/pip" show pytauargus | grep -E '^(Name|Version):'
+          # Guard: the resolved engine must be this run's build, not PyPI's.
+          RESOLVED="$("$RUNNER_TEMP/smoke/bin/pip" show pytauargus | sed -n 's/^Version: //p')"
+          WANTED="$(python3 -c "import tomllib;print(tomllib.load(open('tui/pyproject.toml','rb'))['project']['version'])")"
+          [ "$RESOLVED" = "$WANTED" ] || { echo "::error::resolved pytauargus $RESOLVED, expected $WANTED"; exit 1; }
+          "$RUNNER_TEMP/smoke/bin/python" -c "import pytauargus, pytauargus_tui; print('import ok, pytauargus', pytauargus.__version__)"
+          # Both entry points: tauargus-tui (human command) and the
+          # package-named alias that `uvx pytauargus-tui` resolves.
+          test -x "$RUNNER_TEMP/smoke/bin/tauargus-tui" \
+            && test -x "$RUNNER_TEMP/smoke/bin/pytauargus-tui" \
+            && echo "entry points ok"
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytauargus-tui-wheel
+          path: dist/*.whl
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [build-macos, build-linux, build-windows, build-tui]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/py-v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # PyPI versions are immutable: refuse to publish if the tag and the
+      # package versions disagree. The TUI is released in lockstep with
+      # pytauargus, so all three must agree.
+      - name: Check tag matches package versions
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#py-v}"
+          PY_VERSION="$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+          TUI_VERSION="$(python3 -c "import tomllib;print(tomllib.load(open('tui/pyproject.toml','rb'))['project']['version'])")"
+          echo "tag=$TAG_VERSION pytauargus=$PY_VERSION tui=$TUI_VERSION"
+          [ "$TAG_VERSION" = "$PY_VERSION" ] || { echo "::error::Tag py-v$TAG_VERSION does not match pytauargus version $PY_VERSION"; exit 1; }
+          [ "$PY_VERSION" = "$TUI_VERSION" ] || { echo "::error::pytauargus ($PY_VERSION) and pytauargus-tui ($TUI_VERSION) must be released in lockstep"; exit 1; }
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Show wheels
+        run: ls -la dist
+
+      # Downloadable wheels on the GitHub Release page.
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.whl
+          generate_release_notes: true
+
+      # twine uploads one project per session, so the TUI wheel (a distinct
+      # PyPI project) is separated from the pytauargus wheels first.
+      - name: Separate TUI wheel
+        run: |
+          set -euo pipefail
+          mkdir -p dist-tui
+          mv dist/pytauargus_tui-*.whl dist-tui/
+          ls -la dist dist-tui
+
+      # Optional PyPI publish (trusted publishing or token).
+      - name: Publish pytauargus to PyPI
+        if: ${{ vars.PYPI_ENABLED == 'true' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Publish pytauargus-tui to PyPI
+        if: ${{ vars.PYPI_ENABLED == 'true' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-tui
+
+  image:
+    name: Publish container image
+    needs: [release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    # The GHCR package name is explicit (not github.repository) so the
+    # container image can be renamed independently of the repo.
+    env:
+      IMAGE_REPO: ghcr.io/trygu/tauargus-engine
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image and smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: dist
+          file: Dockerfile
+          load: true
+          tags: tauargus:test
+
+      - name: Run smoke test
+        run: docker run --rm tauargus:test --version
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image version
+        run: echo "VERSION=${GITHUB_REF_NAME#py-v}" >> "$GITHUB_ENV"
+
+      - name: Push image
+        uses: docker/build-push-action@v6
+        with:
+          context: dist
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ env.IMAGE_REPO }}:${{ env.VERSION }}
+            ${{ env.IMAGE_REPO }}:latest

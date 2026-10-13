@@ -1,0 +1,75 @@
+# Build the pinned engine and run the package test suite on every push and
+# PR. (Wheel building and releasing live in wheels.yml and run only on
+# py-v* tags.)
+
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HIGHS_TAG: v1.15.1
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    env:
+      TAUARGUS_ENGINE_DIR: ${{ github.workspace }}/tauargus-engine
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read engine pin
+        run: echo "ENGINE_REV=$(tr -d '[:space:]' < tauargus-engine-rev)" >> "$GITHUB_ENV"
+
+      - name: Checkout pinned tauargus-engine
+        uses: actions/checkout@v4
+        with:
+          repository: trygu/tauargus-engine
+          ref: ${{ env.ENGINE_REV }}
+          path: tauargus-engine
+          submodules: recursive
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Cache HiGHS
+        id: highs-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/highs-prefix
+          key: highs-${{ matrix.os }}-${{ env.HIGHS_TAG }}
+
+      - name: Build HiGHS from source
+        if: steps.highs-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$HIGHS_TAG" https://github.com/ERGO-Code/HiGHS.git highs
+          cmake -S highs -B highs/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/highs-prefix"
+          cmake --build highs/build -j
+          cmake --install highs/build
+
+      - name: Build pinned engine
+        run: |
+          set -euo pipefail
+          HIGHS_CFG="$(dirname "$(find "$RUNNER_TEMP/highs-prefix" -name 'highs-config.cmake' -o -name 'highsConfig.cmake' -o -name 'HighsConfig.cmake' | head -n1)")"
+          cmake -S tauargus-engine/engine -B tauargus-engine/engine/build \
+            -DCMAKE_BUILD_TYPE=Release -DHighs_DIR="$HIGHS_CFG"
+          cmake --build tauargus-engine/engine/build -j
+
+      - name: Install package
+        run: uv sync --extra test
+
+      - name: Run tests
+        run: uv run pytest -q

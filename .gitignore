@@ -1,10 +1,25 @@
 .venv/
 build/
 dist/
+out/
 *.log
+*.so
+*.dylib
+*.egg-info/
 __pycache__/
 *.pyc
 *.DS_Store
 .pytest_cache/
+tui/.venv/
+tui/build/
+tui/dist/
 # TUI workspace manifests (runtime artifacts written next to a .arb)
 *.workspace.json
+
+# Engine-generated batch artifacts (written to the CWD by test runs)
+*.dat
+*.lp
+*.bra
+*.heu
+*.sta
+CSPlogfile.txt

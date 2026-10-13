@@ -1,0 +1,53 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.13"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "pytauargus"
+version = "0.5.2"
+description = "Tau-Argus: Statistical Disclosure Control, open-source solvers (HiGHS) + Python CLI"
+requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "EUPL-1.2" }
+keywords = ["statistical disclosure control", "SDC", "tabular data", "cell suppression", "controlled rounding", "HiGHS"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C++",
+]
+dependencies = []
+
+[project.optional-dependencies]
+# DataFrame in/out adapters (to_microdata / TableResult.dataframe()).
+# The core never imports these; install one to get real frame objects.
+dataframe = ["pandas"]
+parquet = ["pyarrow"]
+test = ["pytest", "pandas", "pyarrow"]
+# Interactive examples + headless execution of the notebooks/ directory.
+notebooks = ["jupyterlab", "nbclient", "nbformat", "ipykernel", "pandas", "pyarrow"]
+# Terminal UI (the `tauargus-tui` command). Installs the separate
+# pytauargus-tui package, which itself depends on pytauargus, so the engine
+# stays the base. `pip install "pytauargus[tui]"`.
+tui = ["pytauargus-tui>=0.5.2"]
+
+[project.urls]
+Homepage = "https://github.com/trygu/pytauargus"
+Repository = "https://github.com/trygu/pytauargus"
+Issues = "https://github.com/trygu/pytauargus/issues"
+
+# Same-repo dev: resolve the `tui` extra from the local tui/ package so
+# `uv lock` works before pytauargus-tui exists on PyPI (and so dev venvs
+# follow the in-tree TUI). Published wheels are unaffected — scikit-build
+# only reads [project], so PyPI metadata keeps the plain version range.
+[tool.uv.sources]
+pytauargus-tui = { path = "tui" }
+
+[project.scripts]
+tauargus = "pytauargus.cli:main"
+
+[tool.scikit-build]
+cmake.version = ">=3.16"
+build-dir = "build/{wheel_tag}"
+wheel.packages = ["src/pytauargus"]
