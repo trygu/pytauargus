@@ -1,0 +1,3 @@
+[submodule "tauargus-engine"]
+	path = tauargus-engine
+	url = https://github.com/trygu/tauargus-engine.git
