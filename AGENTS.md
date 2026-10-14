@@ -20,8 +20,10 @@ front-end is the separate `rtauargus` package.
 - Engine behavior is defined by the legacy τ-ARGUS 4.1 manual, kept in
   `tauargus-engine/docs/tau-argus-4.1-markdown-bundle/`.
 - Engine bugs are fixed in `tauargus-engine`. Here you bump the pin,
-  never patch engine code. The HiGHS source pin (`HIGHS_TAG` in the
-  workflows) lives in this repo, since the wheel bundles HiGHS.
+  never patch engine code. The HiGHS version is pinned in the engine
+  repo (`engine/HiGHS-VERSION`, the single source of truth); the
+  workflows read it from the pinned engine checkout, since the wheel
+  bundles HiGHS.
 - To advance the pin: the engine change must be committed and pushed in
   `tauargus-engine` first, then update `tauargus-engine-rev` here and
   release.

@@ -31,8 +31,9 @@ concurrency:
   group: wheels-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  HIGHS_TAG: v1.15.1
+# The HiGHS version is not set here: each build job reads it from the pinned
+# engine checkout (engine/HiGHS-VERSION), the single source of truth shared
+# with the R package build.
 
 # ---------------------------------------------------------------------------
 # Shared build recipe, inlined per job (GitHub Actions has no job-level
@@ -61,6 +62,11 @@ jobs:
           ref: ${{ env.ENGINE_REV }}
           path: tauargus-engine
           submodules: recursive
+
+      # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
+      # the single source of truth for both the Python and the R builds.
+      - name: Read HiGHS pin
+        run: echo "HIGHS_TAG=$(tr -d '[:space:]' < tauargus-engine/engine/HiGHS-VERSION)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@v5
         with:
@@ -155,6 +161,11 @@ jobs:
           path: tauargus-engine
           submodules: recursive
 
+      # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
+      # the single source of truth for both the Python and the R builds.
+      - name: Read HiGHS pin
+        run: echo "HIGHS_TAG=$(tr -d '[:space:]' < tauargus-engine/engine/HiGHS-VERSION)" >> "$GITHUB_ENV"
+
       - name: Toolchain (cmake/ninja/auditwheel)
         run: /opt/python/${{ matrix.python }}/bin/pip install cmake ninja "auditwheel>=6" "scikit-build-core>=0.10" "pybind11>=2.13"
 
@@ -220,6 +231,11 @@ jobs:
           ref: ${{ env.ENGINE_REV }}
           path: tauargus-engine
           submodules: recursive
+
+      # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
+      # the single source of truth for both the Python and the R builds.
+      - name: Read HiGHS pin
+        run: echo "HIGHS_TAG=$(tr -d '[:space:]' < tauargus-engine/engine/HiGHS-VERSION)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@v5
         with:

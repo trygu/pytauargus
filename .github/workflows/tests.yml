@@ -14,9 +14,6 @@ concurrency:
   group: tests-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  HIGHS_TAG: v1.15.1
-
 jobs:
   test:
     name: ${{ matrix.os }}
@@ -40,6 +37,11 @@ jobs:
           ref: ${{ env.ENGINE_REV }}
           path: tauargus-engine
           submodules: recursive
+
+      # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
+      # the single source of truth for both the Python and the R builds.
+      - name: Read HiGHS pin
+        run: echo "HIGHS_TAG=$(tr -d '[:space:]' < tauargus-engine/engine/HiGHS-VERSION)" >> "$GITHUB_ENV"
 
       - uses: astral-sh/setup-uv@v5
 
