@@ -333,7 +333,12 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip wheel tui --no-deps -w dist
+          # Explicit ./ so pip builds this repo's package, not the unrelated
+          # "tui" distribution on PyPI (pip 26 resolves bare names to the
+          # index even when a same-named directory exists).
+          python -m pip wheel ./tui --no-deps -w dist
+          # Fail fast if the wrong distribution was built.
+          ls dist/pytauargus_tui-*.whl
 
       - name: Show wheel
         run: ls -la dist
