@@ -188,6 +188,8 @@ jobs:
           cmake --build tauargus-engine/engine/build -j
 
       - name: Build wheel
+        env:
+          TAUARGUS_ENGINE_DIR: ${{ github.workspace }}/tauargus-engine
         run: |
           set -euo pipefail
           /opt/python/${{ matrix.python }}/bin/pip wheel \

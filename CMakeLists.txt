@@ -5,7 +5,7 @@
 # checkout, which also provides the engine libs the extension links.
 #
 # The checkout comes from TAUARGUS_ENGINE_DIR (environment variable or
-# -DTAUARGUS_ENGINE_DIR), defaulting to the sibling ../tauargus-engine. Its
+# -DTAUARGUS_ENGINE_DIR), defaulting to ./tauargus-engine in this repo. Its
 # superbuild output (engine/build/lib) must exist before the wheel build;
 # scripts/sync-venv.sh builds it.
 cmake_minimum_required(VERSION 3.16)
@@ -15,7 +15,7 @@ if(NOT DEFINED TAUARGUS_ENGINE_DIR)
     if(DEFINED ENV{TAUARGUS_ENGINE_DIR})
         set(TAUARGUS_ENGINE_DIR $ENV{TAUARGUS_ENGINE_DIR})
     else()
-        set(TAUARGUS_ENGINE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../tauargus-engine)
+        set(TAUARGUS_ENGINE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tauargus-engine)
     endif()
 endif()
 
