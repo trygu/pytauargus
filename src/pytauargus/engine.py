@@ -791,8 +791,17 @@ class Engine:
         shadow_idx = -1 if is_freq else (
             self._metadata.index_of(spec.shadow_var) if spec.shadow_var else resp_idx
         )
-        cost_idx = -1
-        if spec.cost_var and spec.cost_var not in ("-1", "-2", "-3"):
+        # Legacy default: omitted cost means the response variable;
+        # explicit special codes -1/-2/-3 map to the native sentinels.
+        if not spec.cost_var:
+            cost_idx = resp_idx
+        elif spec.cost_var == "-1":
+            cost_idx = -1
+        elif spec.cost_var == "-2":
+            cost_idx = -2
+        elif spec.cost_var == "-3":
+            cost_idx = -3
+        else:
             cost_idx = self._metadata.index_of(spec.cost_var)
 
         req_idx = self._metadata.index_of("REQUEST")

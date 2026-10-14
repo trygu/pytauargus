@@ -188,7 +188,7 @@ class SpecifyTable:
     resp_var: str
     shadow_var: str = ""
     cost_var: str = ""          # "" | "-1" | "-2" | "-3" | var name
-    lam: float = 0.0
+    lam: float = 1.0            # legacy default: response cost, exponent 1
 
 
 @dataclass
@@ -325,7 +325,7 @@ def _parse_specify_table(tok: Tokenizer) -> SpecifyTable:
 
     shadow = ""
     cost = ""
-    lam = 0.0
+    lam = 1.0
     if tok.get_line() != "":
         shadow = tok.next_field("|")
         if tok.get_line() != "":
