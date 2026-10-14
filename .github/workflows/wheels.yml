@@ -3,9 +3,9 @@
 #
 # Why a manual matrix instead of cibuildwheel: the Python build links
 # against a pre-built engine. The engine and the _tauargus extension it
-# feeds come from the pinned tauargus-engine checkout (tauargus-engine-rev,
-# checked out at ./tauargus-engine). cibuildwheel copies only the package
-# dir into its container and would not see it.
+# feeds come from the tauargus-engine submodule (the gitlink in this repo is
+# the engine pin; the checkout places it at ./tauargus-engine). cibuildwheel
+# copies only the package dir into its container and would not see it.
 #
 # Each build job:
 #   1. checks out the pinned tauargus-engine (submodules recursive),
@@ -51,17 +51,13 @@ jobs:
         python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Read engine pin
-        run: echo "ENGINE_REV=$(tr -d '[:space:]' < tauargus-engine-rev)" >> "$GITHUB_ENV"
-
-      - name: Checkout pinned tauargus-engine
-        uses: actions/checkout@v4
         with:
-          repository: trygu/tauargus-engine
-          ref: ${{ env.ENGINE_REV }}
-          path: tauargus-engine
           submodules: recursive
+
+      # The engine pin is the submodule gitlink in this repo; the checkout
+      # above places it at ./tauargus-engine (nested submodules included).
+      - name: Read engine pin
+        run: echo "ENGINE_REV=$(git -C tauargus-engine rev-parse HEAD)" >> "$GITHUB_ENV"
 
       # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
       # the single source of truth for both the Python and the R builds.
@@ -149,17 +145,13 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
-
-      - name: Read engine pin
-        run: echo "ENGINE_REV=$(tr -d '[:space:]' < tauargus-engine-rev)" >> "$GITHUB_ENV"
-
-      - name: Checkout pinned tauargus-engine
-        uses: actions/checkout@v4
         with:
-          repository: trygu/tauargus-engine
-          ref: ${{ env.ENGINE_REV }}
-          path: tauargus-engine
           submodules: recursive
+
+      # The engine pin is the submodule gitlink in this repo; the checkout
+      # above places it at ./tauargus-engine (nested submodules included).
+      - name: Read engine pin
+        run: echo "ENGINE_REV=$(git -C tauargus-engine rev-parse HEAD)" >> "$GITHUB_ENV"
 
       # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
       # the single source of truth for both the Python and the R builds.
@@ -220,17 +212,13 @@ jobs:
         python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Read engine pin
-        run: echo "ENGINE_REV=$(tr -d '[:space:]' < tauargus-engine-rev)" >> "$GITHUB_ENV"
-
-      - name: Checkout pinned tauargus-engine
-        uses: actions/checkout@v4
         with:
-          repository: trygu/tauargus-engine
-          ref: ${{ env.ENGINE_REV }}
-          path: tauargus-engine
           submodules: recursive
+
+      # The engine pin is the submodule gitlink in this repo; the checkout
+      # above places it at ./tauargus-engine (nested submodules included).
+      - name: Read engine pin
+        run: echo "ENGINE_REV=$(git -C tauargus-engine rev-parse HEAD)" >> "$GITHUB_ENV"
 
       # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
       # the single source of truth for both the Python and the R builds.

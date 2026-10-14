@@ -10,9 +10,10 @@
 # behind in-tree fixes by a full release cycle.
 #
 # The engine is read from the sibling ../tauargus-engine checkout, which
-# must be at the pinned revision (tauargus-engine-rev) with submodules in
-# sync. Point TAUARGUS_ENGINE_DIR at a different checkout for local engine
-# work; TAUARGUS_ALLOW_ENGINE_DRIFT=1 skips the pin gate.
+# must be at the pinned revision (the tauargus-engine submodule gitlink in
+# this repo is the pin) with submodules in sync. Point TAUARGUS_ENGINE_DIR
+# at a different checkout (e.g. the submodule dir) for local engine work;
+# TAUARGUS_ALLOW_ENGINE_DRIFT=1 skips the pin gate.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -26,7 +27,7 @@ VENV_PY="$VENV/bin/python"
 
 REPO="$(pwd)"
 ENGINE="${TAUARGUS_ENGINE_DIR:-$(cd "$REPO/.." && pwd)/tauargus-engine}"
-PIN="$(tr -d '[:space:]' < "$REPO/tauargus-engine-rev")"
+PIN="$(git -C "$REPO" ls-tree HEAD tauargus-engine | awk '{print $3}')"
 HEAD="$(git -C "$ENGINE" rev-parse HEAD)"
 if [[ -z "${TAUARGUS_ALLOW_ENGINE_DRIFT:-}" && "$HEAD" != "$PIN" ]]; then
     echo "engine checkout at $HEAD, pin is $PIN" >&2
