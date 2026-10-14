@@ -17,8 +17,7 @@
 #   6. uploads it as an artifact.
 #
 # The release job (on tag) aggregates the artifacts into a GitHub Release
-# and, if a PyPI token is configured, publishes there too. The image job then
-# builds a multi-arch (amd64/arm64) container image from the Linux wheels and pushes it to GHCR.
+# and, if PyPI publishing is enabled, publishes there too.
 
 name: wheels
 
@@ -430,57 +429,3 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist-tui
-
-  image:
-    name: Publish container image
-    needs: [release]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      packages: write
-    # The GHCR package name is explicit (not github.repository) so the
-    # container image can be renamed independently of the repo.
-    env:
-      IMAGE_REPO: ghcr.io/trygu/tauargus-engine
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-
-      - uses: docker/setup-qemu-action@v3
-
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build image and smoke test
-        uses: docker/build-push-action@v6
-        with:
-          context: dist
-          file: Dockerfile
-          load: true
-          tags: tauargus:test
-
-      - name: Run smoke test
-        run: docker run --rm tauargus:test --version
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Image version
-        run: echo "VERSION=${GITHUB_REF_NAME#py-v}" >> "$GITHUB_ENV"
-
-      - name: Push image
-        uses: docker/build-push-action@v6
-        with:
-          context: dist
-          file: Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: |
-            ${{ env.IMAGE_REPO }}:${{ env.VERSION }}
-            ${{ env.IMAGE_REPO }}:latest

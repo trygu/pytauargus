@@ -65,12 +65,9 @@ front-end is the separate `rtauargus` package.
   `git tag py-vX.Y.Z && git push origin py-vX.Y.Z` and watch
   `gh run list --workflow wheels --limit 1`.
 - The tag runs `wheels.yml`: per-platform wheels, GitHub Release, PyPI
-  via trusted publishing (gated on the `PYPI_ENABLED` repo variable),
-  and the GHCR image. PyPI versions are immutable: the workflow fails
-  if the tag differs from either package version.
-- The container image keeps the name
-  `ghcr.io/trygu/tauargus-engine:<version>` (and `:latest`); it is built
-  by this repo.
+  via trusted publishing (gated on the `PYPI_ENABLED` repo variable).
+  PyPI versions are immutable: the workflow fails if the tag differs
+  from either package version.
 
 ## 6. Communication and docs
 

@@ -65,27 +65,6 @@ It runs unattended in containers, CI and batch services:
 - **Portable:** wheels for Linux (manylinux_2_28, so any glibc 2.28+ image such
   as `python:3.x-slim`), macOS arm64 and Windows x64.
 
-A ready-made image is published to GitHub Container Registry with each release
-(linux/amd64 and linux/arm64):
-
-```bash
-docker run --pull=always --rm -v "$PWD":/work ghcr.io/trygu/tauargus-engine:latest run batch.arb
-```
-
-`latest` is updated with each release; `--pull=always` checks for an updated image
-before running. To keep a specific release, choose a version from
-[Releases](https://github.com/trygu/pytauargus/releases) and use
-`ghcr.io/trygu/tauargus-engine:<version>` (without the release tag's `py-v` prefix).
-
-To build your own image:
-
-```dockerfile
-FROM python:3.12-slim
-RUN pip install --no-cache-dir pytauargus
-WORKDIR /work
-ENTRYPOINT ["tauargus"]
-```
-
 ## What problem it solves
 
 Publishing a table can disclose information about individual respondents: a
