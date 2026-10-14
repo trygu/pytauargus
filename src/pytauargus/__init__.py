@@ -9,12 +9,12 @@ The native engine (C++ core + HiGHS-backed solvers) is exposed through the
 compiled extension ``pytauargus._tauargus``.
 """
 
-from ._tauargus import TauArgus, HiTaSCtrl, RounderCtrl  # noqa: F401
+from ._tauargus import TauArgus, HiTaSCtrl, RounderCtrl, engine_meta  # noqa: F401
 from .protect import protect, ProtectResult  # noqa: F401
 
-__version__ = "0.5.1"
+__version__ = "0.5.3"
 __all__ = [
-    "TauArgus", "HiTaSCtrl", "RounderCtrl", "Engine",
+    "TauArgus", "HiTaSCtrl", "RounderCtrl", "Engine", "engine_meta",
     "write_hrc", "HrcError", "protect", "ProtectResult", "TableResult",
     "to_microdata", "make_frame", "__version__",
 ]
