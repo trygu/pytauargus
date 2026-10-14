@@ -62,6 +62,7 @@ jobs:
       # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
       # the single source of truth for both the Python and the R builds.
       - name: Read HiGHS pin
+        shell: bash
         run: echo "HIGHS_TAG=$(tr -d '[:space:]' < tauargus-engine/engine/HiGHS-VERSION)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@v5
@@ -100,7 +101,7 @@ jobs:
           cmake -S tauargus-engine/engine -B tauargus-engine/engine/build \
             -DCMAKE_BUILD_TYPE=Release \
             -DHighs_DIR="${{ steps.highs.outputs.prefix }}/lib/cmake/Highs"
-          cmake --build engine/build -j
+          cmake --build tauargus-engine/engine/build -j
           touch tauargus-engine/engine/build/.done
 
       - name: Build wheel
@@ -156,6 +157,7 @@ jobs:
       # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
       # the single source of truth for both the Python and the R builds.
       - name: Read HiGHS pin
+        shell: bash
         run: echo "HIGHS_TAG=$(tr -d '[:space:]' < tauargus-engine/engine/HiGHS-VERSION)" >> "$GITHUB_ENV"
 
       - name: Toolchain (cmake/ninja/auditwheel)
@@ -183,7 +185,7 @@ jobs:
           cmake -S tauargus-engine/engine -B tauargus-engine/engine/build \
             -DCMAKE_BUILD_TYPE=Release \
             -DHighs_DIR="$(dirname "$(find "${{ steps.highs.outputs.prefix }}" -name "[Hh]ighs[Cc]onfig.cmake" -o -name highs-config.cmake | head -n1)")"
-          cmake --build engine/build -j
+          cmake --build tauargus-engine/engine/build -j
 
       - name: Build wheel
         run: |
@@ -223,6 +225,7 @@ jobs:
       # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
       # the single source of truth for both the Python and the R builds.
       - name: Read HiGHS pin
+        shell: bash
         run: echo "HIGHS_TAG=$(tr -d '[:space:]' < tauargus-engine/engine/HiGHS-VERSION)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@v5
@@ -261,7 +264,7 @@ jobs:
           cmake -S tauargus-engine/engine -B tauargus-engine/engine/build \
             -DCMAKE_BUILD_TYPE=Release \
             -DHighs_DIR="$(dirname "$(find "${{ steps.highs.outputs.prefix }}" -name "[Hh]ighs[Cc]onfig.cmake" -o -name highs-config.cmake | head -n1)")"
-          cmake --build engine/build -j --config Release
+          cmake --build tauargus-engine/engine/build -j --config Release
           touch tauargus-engine/engine/build/.done
 
       - name: Build wheel
