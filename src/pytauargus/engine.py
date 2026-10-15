@@ -1800,8 +1800,27 @@ class Engine:
         else:
             resp = 0
 
+        # Legacy option flags (batch.java writeTableBatch): per-command
+        # defaults with QU (embed quotes) on and AS/SE/FL/HL off, each
+        # overridable by an "XX+"/"XX-" token in the options string.
+        embed = self._wt_opt(cmd.options, "QU", True)
+        add_status = self._wt_opt(cmd.options, "AS", False)
+        suppress_empty = self._wt_opt(cmd.options, "SE", False)
+        sbs_hier = self._wt_opt(cmd.options, "HL", False)
+
+        if cmd.output_type in (4, 5) and tab in self._ckm_tables:
+            raise BatchError(
+                f"Chosen output type {cmd.output_type} is not allowed "
+                f"for this type of protection")
+        if cmd.output_type in (6, 7):
+            raise BatchError(
+                f"WRITETABLE output type {cmd.output_type} "
+                f"({'JJ' if cmd.output_type == 6 else 'CKM'}) is not "
+                f"implemented; the legacy writer had no native "
+                f"equivalent")
         if cmd.output_type == 1:  # CSV
-            self._tau.write_csv(tab, str(fpath), True, IDENTITY_DIM_SEQUENCE, resp)
+            self._tau.write_csv(tab, str(fpath), embed, IDENTITY_DIM_SEQUENCE,
+                                resp)
         elif cmd.output_type == 5:  # INTERMEDIATE (audit table)
             opts = set(cmd.options)
             simple = "+SO" in opts
@@ -1817,13 +1836,55 @@ class Engine:
                                           holding=holding,
                                           suppress_empty=suppress_empty,
                                           with_audit=with_audit)
-        elif cmd.output_type in (2, 3, 4, 6, 7):
-            # CellRecords (SBS, code value, etc.)
-            self._tau.write_cell_records(tab, str(fpath), True, False,
-                                         False, "", False, True, resp)
+        elif cmd.output_type in (2, 3):  # CSV for pivot, code value
+            # Varnames-on-first-line defaults to on for pivot only.
+            varnames = self._wt_opt(cmd.options, "FL",
+                                    cmd.output_type == 2)
+            first = self._wt_first_line(tab, resp, add_status, embed) \
+                if varnames else ""
+            self._tau.write_cell_records(tab, str(fpath), False, False,
+                                         suppress_empty, first, add_status,
+                                         embed, resp)
+        elif cmd.output_type == 4:  # SBS
+            self._tau.write_cell_records(tab, str(fpath), True, sbs_hier,
+                                         True, "", True, embed, resp)
         else:
             raise BatchError(f"Unknown output type {cmd.output_type}")
         logger.info("Wrote table %d to %s", tab + 1, fpath)
+
+    @staticmethod
+    def _wt_opt(options: List[str], name: str, default: bool) -> bool:
+        """Legacy option token: ``XX+``/``XX-`` overrides the default."""
+        if f"+{name}" in options:
+            return True
+        if f"-{name}" in options:
+            return False
+        return default
+
+    def _wt_first_line(self, tab: int, resp: int, add_status: bool,
+                       embed: bool) -> str:
+        """Java ``SaveTable.makeFirstLine`` for the table at ``tab``."""
+        spec, _srs = self._tables[tab]
+        quote = '"' if embed else ""
+        hs = ",".join(quote + name + quote for name in spec.exp_vars)
+        resp_var = self._metadata.find(spec.resp_var)
+        if resp_var is not None and resp_var.type == "FREQUENCY":
+            hs += f",{quote}Freq{quote}"
+        else:
+            hs += f",{quote}{spec.resp_var}"
+            if resp == 1:
+                hs += "_Round"
+            elif resp == 2:
+                hs += "_CTA"
+            hs += quote
+        if add_status:
+            if resp == 0:
+                hs += f",{quote}Status{quote}"
+            if resp in (1, 2):
+                hs += f",{quote}{spec.resp_var}_Orig{quote}"
+            if resp == 2:
+                hs += f",{quote}Status{quote}"
+        return hs
 
     # -- apriori --------------------------------------------------------------
     def _bogus_range(self, vi: int, idx: int,
