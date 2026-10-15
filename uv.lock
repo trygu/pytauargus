@@ -1974,7 +1974,7 @@ wheels = [
 
 [[package]]
 name = "pytauargus"
-version = "0.5.3"
+version = "0.5.5"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -2027,7 +2027,7 @@ provides-extras = ["dataframe", "parquet", "test", "notebooks", "tui"]
 
 [[package]]
 name = "pytauargus-tui"
-version = "0.5.3"
+version = "0.5.5"
 source = { directory = "tui" }
 dependencies = [
     { name = "pytauargus" },
