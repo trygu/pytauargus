@@ -174,7 +174,7 @@ jobs:
             -DBUILD_TESTING=OFF \
             -DCMAKE_INSTALL_PREFIX="$PREFIX" \
             -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
-            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,--exclude-libs,libstdc++.a -Wl,--exclude-libs,libsupc++.a -Wl,--exclude-libs,libgcc.a -Wl,--exclude-libs,libgcc_eh.a"
           cmake --build highs/build -j
           cmake --install highs/build
           echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
@@ -223,6 +223,20 @@ jobs:
             echo "host C++ runtime dependency in:$bad" >&2
             exit 1
           fi
+          # The embedded static runtime must not leak into the global
+          # symbol table either: an exported static runtime collides with
+          # the dynamic libstdc++ of another extension in the same
+          # process (observed as free(): invalid pointer with pyarrow).
+          command -v readelf >/dev/null || { echo "readelf not found" >&2; exit 1; }
+          for f in $(find "$TMP" -name "*.so*" -type f); do
+            n=$(readelf --dyn-syms "$f" 2>/dev/null \
+              | awk '$5=="GLOBAL" && $7!="UND" && $8 ~ /^(_ZSt|_ZNSt|__cxa|_Znw|_Zdl)/' \
+              | wc -l)
+            if [ "$n" -gt 0 ]; then
+              echo "exported C++ runtime symbols in $f: $n" >&2
+              exit 1
+            fi
+          done
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4

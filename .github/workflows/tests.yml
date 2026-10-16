@@ -46,15 +46,23 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/highs-prefix
-          key: highs-${{ matrix.os }}-${{ env.HIGHS_TAG }}
+          key: highs-${{ matrix.os }}-${{ env.HIGHS_TAG }}-static-v2
 
       - name: Build HiGHS from source
         if: steps.highs-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           git clone --depth 1 --branch "$HIGHS_TAG" https://github.com/ERGO-Code/HiGHS.git highs
+          # Linux: static C++ runtime so the dev build matches the wheel
+          # (self-contained, no host libstdc++ dependency); the
+          # --exclude-libs keep the embedded runtime's symbols local. One
+          # -Wl per archive: the GCC driver splits -Wl, lists on commas.
+          highs_link_flags=()
+          if [ "$(uname)" = "Linux" ]; then
+            highs_link_flags=(-DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,--exclude-libs,libstdc++.a -Wl,--exclude-libs,libsupc++.a -Wl,--exclude-libs,libgcc.a -Wl,--exclude-libs,libgcc_eh.a")
+          fi
           cmake -S highs -B highs/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
-            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/highs-prefix"
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/highs-prefix" "${highs_link_flags[@]}"
           cmake --build highs/build -j
           cmake --install highs/build
 
