@@ -176,9 +176,14 @@ jobs:
           # would bind to them and corrupt the heap.
           printf '{ global: Highs_*; local: *; };\n' \
             > "$GITHUB_WORKSPACE/highs/highs-export.vers"
+          # No CLI or examples: they link the HiGHS C++ API, which the
+          # version script keeps local (the engine uses the C API only).
           cmake -S highs -B highs/build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DBUILD_CXX_EXE=OFF \
+            -DBUILD_SHARED_EXTRAS_LIB=OFF \
             -DCMAKE_INSTALL_PREFIX="$PREFIX" \
             -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
             -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,--exclude-libs,libstdc++.a -Wl,--exclude-libs,libsupc++.a -Wl,--exclude-libs,libgcc.a -Wl,--exclude-libs,libgcc_eh.a -Wl,--version-script=$GITHUB_WORKSPACE/highs/highs-export.vers"
