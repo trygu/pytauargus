@@ -207,12 +207,15 @@ jobs:
       # libhighs needed the host libstdc++).
       - name: Verify no host C++ runtime dependency
         run: |
-          set -euo pipefail
+          set -eu
           TMP="$(mktemp -d)"
-          python -m zipfile -e repaired/*.whl "$TMP"
+          /opt/python/${{ matrix.python }}/bin/python -m zipfile -e repaired/*.whl "$TMP"
+          # A library that dynamically depends on the host C++ runtime
+          # carries the DT_NEEDED strings in its dynamic section; none of
+          # our bundled libraries may contain them.
           bad=""
           for f in $(find "$TMP" -name "*.so*" -type f); do
-            if objdump -p "$f" | grep -qE "NEEDED.*(libstdc\+\+|libgcc_s)"; then
+            if grep -q "libstdc++\.so\.6" "$f" || grep -q "libgcc_s\.so\.1" "$f"; then
               bad="$bad $f"
             fi
           done
