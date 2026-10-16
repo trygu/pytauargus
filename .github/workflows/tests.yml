@@ -57,12 +57,16 @@ jobs:
           # (self-contained, no host libstdc++ dependency); the
           # --exclude-libs keep the embedded runtime's symbols local. One
           # -Wl per archive: the GCC driver splits -Wl, lists on commas.
-          highs_link_flags=()
+          # (No empty-array expansion: the macOS runner's bash 3.2 dies
+          # on it under set -u.)
           if [ "$(uname)" = "Linux" ]; then
-            highs_link_flags=(-DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,--exclude-libs,libstdc++.a -Wl,--exclude-libs,libsupc++.a -Wl,--exclude-libs,libgcc.a -Wl,--exclude-libs,libgcc_eh.a")
+            cmake -S highs -B highs/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+              -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/highs-prefix" \
+              -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,--exclude-libs,libstdc++.a -Wl,--exclude-libs,libsupc++.a -Wl,--exclude-libs,libgcc.a -Wl,--exclude-libs,libgcc_eh.a"
+          else
+            cmake -S highs -B highs/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+              -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/highs-prefix"
           fi
-          cmake -S highs -B highs/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
-            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/highs-prefix" "${highs_link_flags[@]}"
           cmake --build highs/build -j
           cmake --install highs/build
 
