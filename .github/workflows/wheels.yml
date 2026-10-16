@@ -169,11 +169,24 @@ jobs:
           PREFIX="$GITHUB_WORKSPACE/highs-prefix"
           git clone --depth 1 --branch "$HIGHS_TAG" \
             https://github.com/ERGO-Code/HiGHS.git highs
+          # Version script: export only the HiGHS C API. Without it,
+          # HiGHS's own template instantiations (std::string, std::vector
+          # members) are exported as strong symbols, and a second C++
+          # runtime in the same process (pyarrow's dynamic libstdc++)
+          # would bind to them and corrupt the heap.
+          printf '{ global: Highs_*; local: *; };\n' \
+            > "$GITHUB_WORKSPACE/highs/highs-export.vers"
+          # No CLI or examples: they link the HiGHS C++ API, which the
+          # version script keeps local (the engine uses the C API only).
           cmake -S highs -B highs/build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DBUILD_CXX_EXE=OFF \
+            -DBUILD_SHARED_EXTRAS_LIB=OFF \
             -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-            -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+            -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
+            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,--exclude-libs,libstdc++.a -Wl,--exclude-libs,libsupc++.a -Wl,--exclude-libs,libgcc.a -Wl,--exclude-libs,libgcc_eh.a -Wl,--version-script=$GITHUB_WORKSPACE/highs/highs-export.vers"
           cmake --build highs/build -j
           cmake --install highs/build
           echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
@@ -186,6 +199,26 @@ jobs:
             -DHighs_DIR="$(dirname "$(find "${{ steps.highs.outputs.prefix }}" -name "[Hh]ighs[Cc]onfig.cmake" -o -name highs-config.cmake | head -n1)")"
           cmake --build tauargus-engine/engine/build -j
 
+      # The engine libs carry the absolute build-tree RUNPATH. auditwheel
+      # resolves such entries against the build host and grafts a
+      # hashed-soname duplicate of the lib into pytauargus.libs, while the
+      # extension (RPATH $ORIGIN) keeps loading the root copy, so each
+      # engine lib would load twice, with two embedded static C++
+      # runtimes, and the interpreter would abort at exit. Normalize the
+      # RUNPATH to $ORIGIN (the sibling engine libs, all installed next
+      # to the extension) plus the HiGHS prefix, so only libhighs is
+      # grafted, exactly once.
+      - name: Normalize engine lib RUNPATH for the wheel
+        run: |
+          set -euo pipefail
+          HIGHS_LIBDIR="$(dirname "$(find "${{ steps.highs.outputs.prefix }}" -name 'libhighs.so.1*' -type f | head -n1)")"
+          for lib in tauargus-engine/engine/build/lib/libtauargus_csp.so \
+                     tauargus-engine/engine/build/lib/libtauargus_hitas.so \
+                     tauargus-engine/engine/build/lib/libtauargus_rounder.so \
+                     tauargus-engine/engine/build/lib/libCRP.so; do
+            patchelf --set-rpath "\$ORIGIN:${HIGHS_LIBDIR}" "$lib"
+          done
+
       - name: Build wheel
         env:
           TAUARGUS_ENGINE_DIR: ${{ github.workspace }}/tauargus-engine
@@ -194,10 +227,61 @@ jobs:
           /opt/python/${{ matrix.python }}/bin/pip wheel \
             . --no-deps -w wheelhouse
 
-      - name: Repair wheel (bundle HiGHS + engine libs)
+      - name: Repair wheel (bundle HiGHS)
         run: |
           set -euo pipefail
           auditwheel repair wheelhouse/*.whl -w repaired
+
+      # The wheel must carry no dependency on the host C++ runtime: the
+      # extension, the engine libs and the bundled HiGHS all statically
+      # link it. Fail if any bundled library still references it (0.5.5
+      # missed this for the R binaries; the 0.5.5 wheel's bundled
+      # libhighs needed the host libstdc++).
+      - name: Verify no host C++ runtime dependency
+        run: |
+          set -eu
+          TMP="$(mktemp -d)"
+          /opt/python/${{ matrix.python }}/bin/python -m zipfile -e repaired/*.whl "$TMP"
+          # A library that dynamically depends on the host C++ runtime
+          # carries the DT_NEEDED strings in its dynamic section; none of
+          # our bundled libraries may contain them.
+          bad=""
+          for f in $(find "$TMP" -name "*.so*" -type f); do
+            if grep -q "libstdc++\.so\.6" "$f" || grep -q "libgcc_s\.so\.1" "$f"; then
+              bad="$bad $f"
+            fi
+          done
+          if [ -n "$bad" ]; then
+            echo "host C++ runtime dependency in:$bad" >&2
+            exit 1
+          fi
+          # The embedded static runtime must not leak into the global
+          # symbol table either: an exported static runtime collides with
+          # the dynamic libstdc++ of another extension in the same
+          # process (observed as free(): invalid pointer with pyarrow).
+          command -v readelf >/dev/null || { echo "readelf not found" >&2; exit 1; }
+          for f in $(find "$TMP" -name "*.so*" -type f); do
+            n=$(readelf --dyn-syms "$f" 2>/dev/null \
+              | awk '$5=="GLOBAL" && $7!="UND" && $8 ~ /^(_ZSt|_ZNSt|__cxa|_Znw|_Zdl)/' \
+              | wc -l)
+            if [ "$n" -gt 0 ]; then
+              echo "exported C++ runtime symbols in $f: $n" >&2
+              exit 1
+            fi
+          done
+          # The repaired wheel must carry at most one module per engine
+          # library. auditwheel grafts a duplicate (hashed soname) when an
+          # rpath entry resolves outside the wheel; two modules of the
+          # same lib carry two embedded runtimes and abort the interpreter
+          # at exit (observed in the 0.5.6 tui smoke test).
+          dups=$(for f in $(find "$TMP" -name "*.so*" -type f); do
+                   readelf -n "$f" 2>/dev/null | awk '/Build ID/{print $3}'
+                 done | sort | uniq -d)
+          if [ -n "$dups" ]; then
+            echo "duplicate library build ids in the wheel:" >&2
+            echo "$dups" >&2
+            exit 1
+          fi
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4

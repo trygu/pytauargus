@@ -46,15 +46,34 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/highs-prefix
-          key: highs-${{ matrix.os }}-${{ env.HIGHS_TAG }}
+          key: highs-${{ matrix.os }}-${{ env.HIGHS_TAG }}-static-v4
 
       - name: Build HiGHS from source
         if: steps.highs-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           git clone --depth 1 --branch "$HIGHS_TAG" https://github.com/ERGO-Code/HiGHS.git highs
-          cmake -S highs -B highs/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
-            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/highs-prefix"
+          # Linux: static C++ runtime so the dev build matches the wheel
+          # (self-contained, no host libstdc++ dependency); the
+          # --exclude-libs keep the embedded runtime's symbols local. One
+          # -Wl per archive: the GCC driver splits -Wl, lists on commas.
+          # (No empty-array expansion: the macOS runner's bash 3.2 dies
+          # on it under set -u.)
+          if [ "$(uname)" = "Linux" ]; then
+            # Version script: export only the HiGHS C API, so HiGHS's own
+            # std:: template instantiations stay local (see wheels.yml).
+            printf '{ global: Highs_*; local: *; };\n' > highs/highs-export.vers
+            # No CLI or examples: they link the HiGHS C++ API, which the
+            # version script keeps local (the engine uses the C API only).
+            cmake -S highs -B highs/build -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF \
+              -DBUILD_CXX_EXE=OFF -DBUILD_SHARED_EXTRAS_LIB=OFF \
+              -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/highs-prefix" \
+              -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,--exclude-libs,libstdc++.a -Wl,--exclude-libs,libsupc++.a -Wl,--exclude-libs,libgcc.a -Wl,--exclude-libs,libgcc_eh.a -Wl,--version-script=$GITHUB_WORKSPACE/highs/highs-export.vers"
+          else
+            cmake -S highs -B highs/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+              -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/highs-prefix"
+          fi
           cmake --build highs/build -j
           cmake --install highs/build
 
