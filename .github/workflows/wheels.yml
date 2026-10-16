@@ -169,12 +169,19 @@ jobs:
           PREFIX="$GITHUB_WORKSPACE/highs-prefix"
           git clone --depth 1 --branch "$HIGHS_TAG" \
             https://github.com/ERGO-Code/HiGHS.git highs
+          # Version script: export only the HiGHS C API. Without it,
+          # HiGHS's own template instantiations (std::string, std::vector
+          # members) are exported as strong symbols, and a second C++
+          # runtime in the same process (pyarrow's dynamic libstdc++)
+          # would bind to them and corrupt the heap.
+          printf '{ global: Highs_*; local: *; };\n' \
+            > "$GITHUB_WORKSPACE/highs/highs-export.vers"
           cmake -S highs -B highs/build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF \
             -DCMAKE_INSTALL_PREFIX="$PREFIX" \
             -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
-            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,--exclude-libs,libstdc++.a -Wl,--exclude-libs,libsupc++.a -Wl,--exclude-libs,libgcc.a -Wl,--exclude-libs,libgcc_eh.a"
+            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,--exclude-libs,libstdc++.a -Wl,--exclude-libs,libsupc++.a -Wl,--exclude-libs,libgcc.a -Wl,--exclude-libs,libgcc_eh.a -Wl,--version-script=$GITHUB_WORKSPACE/highs/highs-export.vers"
           cmake --build highs/build -j
           cmake --install highs/build
           echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
