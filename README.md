@@ -1,111 +1,64 @@
 # pytauargus
 
-Statistical disclosure control (SDC) for tabular data, as a Python package and
-a headless `tauargus` command. Protect tables directly from DataFrames with
-`protect()`, or run supported legacy Tau-Argus `.arb` batches without the GUI.
-The 4.1 manual is the batch/file-format reference, not a complete feature
-compatibility guarantee.
-The engine solves with the open-source
-[HiGHS](https://github.com/ERGO-Code/HiGHS) solver. The native engine and
-the thin bindings live in
-[tauargus-engine](https://github.com/trygu/tauargus-engine); every release
-builds the wheel from a pinned engine revision (see
-[Building from source](#building-from-source)). The R front-end is
-[rtauargus](https://github.com/trygu/rtauargus).
+Statistical disclosure control (SDC) for tabular data, with a Python library,
+a command-line interface and an optional interactive terminal UI.
 
-## Supported workflows and validation
+Protect sensitive cells with primary and secondary suppression, or apply
+controlled rounding. The native [Tau-Argus engine](https://github.com/trygu/tauargus-engine)
+uses the open-source [HiGHS](https://highs.dev/) solver. Released wheels bundle
+both, so no separate engine or licensed solver is needed.
 
-- **OPT, MOD and RND** are implemented and regression-tested.
-- **CKM** has a dispatch path, but no dedicated end-to-end CKM regression suite.
-- **GH, NET and CTA** are rejected by the headless engine, even though the
-  parser/generators accept their legacy syntax.
-- **Suppression audit** runs in-process and has known-interval contract tests.
+## Choose how to use it
 
-Regression tests do not establish comprehensive numerical equivalence with
-original Tau-Argus. Compare protection requirements, realised audit intervals,
-information loss and failure behaviour on representative tables before adopting
-a workflow; solver changes can produce different valid suppression patterns.
-Audit is explicit: `engine.audit(tab)` checks the supplied table's suppression
-constraints. `TableResult.safe()` masks cells; it does not run the audit.
+| Interface | Use it for | Entry point |
+| --- | --- | --- |
+| [Python library](#python-library) | Protect DataFrames or Parquet data in Python; generate inputs or run existing batches | `from pytauargus import protect` |
+| [Command-line interface](#command-line-interface) | Automate Parquet protection or run legacy `.arb` batches in scripts and pipelines | `tauargus` |
+| [Interactive terminal UI](#interactive-terminal-ui) | Inspect tables, mark cells and preview suppression or rounding interactively | `tauargus-tui` |
 
-Run independent jobs in separate processes and working/output directories.
-The native solver retains process-global state, and concurrent engine calls in
-the same process are not validated. OPT/MOD limits are in minutes (`0`: no
-limit); the positive-limit tests do not cover deadline expiry or partial results.
+The Python library and CLI are included in `pytauargus`. The TUI is the
+separate, optional `pytauargus-tui` package and uses the same engine.
 
-See [Compatibility and validation](https://github.com/trygu/tauargus-engine#compatibility-and-validation)
-for the project scope and the distinction between diagnostics and publication.
-
-### Results compared with legacy Tau-Argus
-
-The port targets a drop-in replacement for legacy Tau-Argus 4.1: same
-batch grammar, same file I/O, same protection mathematics. Two
-caveats for anyone expecting number-for-number parity with a legacy
-run:
-
-- **Secondary suppression can differ cell by cell.** OPT and MOD
-  solve an integer program. When several suppression patterns are
-  near-optimal, the legacy CPLEX backend and the HiGHS backend can
-  pick different ones. Both patterns protect the table to the same
-  standard: in the sy1 reference batch the two runs differ in 3 of
-  1654 cells (0.2%), the suppressed weight differs by 9 units (0.09%)
-  and the secondary response by 149777 (0.0016%), and the audit
-  reports 0 unsafe cells for both patterns. Primary suppressions
-  (apriori and manual) are deterministic and match exactly.
-- **WRITETABLE types 6 (JJ) and 7 (CKM) are not implemented.** The
-  legacy writers for these formats were GUI-only Java with no native
-  equivalent, so the command fails with a clear error. Types 1 to 5
-  follow the legacy argument mapping. In 0.5.4 and earlier, types 2
-  to 4 were written with a single argument set that did not match
-  legacy (suppressed cells masked as `x`, empty rows written); that
-  was fixed in 0.5.5.
+**Method support:** OPT, MOD and RND are implemented and regression-tested.
+CKM has a dispatch path without a dedicated end-to-end regression suite.
+GH, NET and CTA are rejected by the engine. See
+[protection, audit and compatibility](#protection-audit-and-compatibility)
+for the scope of validation and differences from legacy Tau-Argus.
 
 ## Install
+
+Install the Python library and CLI:
 
 ```bash
 pip install --upgrade pytauargus
 tauargus --version
 ```
 
-These commands install the current release. To keep a specific version, use
-`pytauargus==<version>` from [PyPI](https://pypi.org/project/pytauargus/#history).
+Choose extras for the workflows you need:
 
-Wheels bundle HiGHS and the native engine; no other installation is needed.
-Available for Python 3.10-3.15 on macOS arm64, Linux x86_64 and aarch64 (manylinux_2_28) and
-Windows x64. Other platforms: build from source (see the repository).
+| Workflow | Install |
+| --- | --- |
+| Pandas examples and DataFrame output | `pip install --upgrade "pytauargus[dataframe]"` |
+| Parquet files and cloud URLs, in Python or the CLI | `pip install --upgrade "pytauargus[parquet]"` |
+| Interactive terminal UI | `pip install --upgrade "pytauargus[tui]"` |
 
-## Cloud native
+Extras can be combined, for example `pip install "pytauargus[dataframe,parquet,tui]"`.
+The TUI can also be installed directly with `pip install pytauargus-tui`;
+this installs `pytauargus` and its CLI too.
 
-It runs unattended in containers, CI and batch services:
+Wheels are available for Python 3.10–3.15 on macOS arm64, Linux x86_64 and
+aarch64 (glibc 2.28+), and Windows x64. For other platforms, see
+[building from source](https://github.com/trygu/pytauargus/blob/master/docs/development.md#building-from-source).
+To pin a release, install `pytauargus==<version>`;
+see the [release history](https://pypi.org/project/pytauargus/#history).
 
-- **Headless:** no GUI, no display, no interactive prompts.
-- **Self-contained:** one `pip install`; the solver (HiGHS) and native libraries
-  are bundled in the wheel. No licensed solver, license server, system packages
-  or Windows registry.
-- **Stateless:** input and output are plain files in the working directory;
-  scratch files go to the system temp directory.
-- **Scriptable:** success is exit code 0; errors go to stderr with a non-zero
-  exit code.
-- **Portable:** wheels for Linux (manylinux_2_28, so any glibc 2.28+ image such
-  as `python:3.x-slim`), macOS arm64 and Windows x64.
+## Python library
 
-## What problem it solves
+### Protect a DataFrame
 
-Publishing a table can disclose information about individual respondents: a
-cell with few contributors, or one dominated by a single contributor. Such
-*primary* cells are suppressed, but totals would still reveal them, so *secondary*
-cells are suppressed as well, chosen to minimise information loss. Alternatively
-the table can be controlled-rounded. `tauargus` does this from a batch file.
-
-## Quick start
-
-### From a DataFrame
-
-`protect()` is available from version 0.3.0. Install with
-`pip install --upgrade "pytauargus[dataframe]>=0.3.0"` to include pandas support.
-For a source checkout, follow the
-[Building from source](#building-from-source) instructions,
-then run `uv sync --extra dataframe`.
+Install the `dataframe` extra for this example. Each input row represents
+one respondent. `protect()` builds the table and totals, applies the safety
+rules, adds secondary suppression and returns the results.
 
 ```python
 import pandas as pd
@@ -128,334 +81,201 @@ publication.to_csv("protected.csv", index=False)
 print(publication)
 ```
 
-Each row is one respondent. `NK(2,75)` flags cells whose two largest
-contributors exceed 75% of the response. The engine computes the crossing
-and totals, identifies primary unsafe cells, and adds secondary suppression.
-`protect()` coordinates microdata, metadata, batch generation and result parsing.
+Here, `NK(2,75)` flags cells whose two largest contributors exceed 75% of the
+response. `OPT(1)` selects optimal suppression for table 1.
+
+`result.tables` contains one `TableResult` per requested table.
+`table.safe()` masks primary and secondary suppressed responses with `x`;
+`table.safe(None)` uses missing values instead. The example selects dimension
+columns and adds the masked response to produce the publication table.
+
+**`table.dataframe()` contains original responses and diagnostics.**
+It does not mask them automatically. Masking with `safe()` does not perform
+an audit; [audit is an explicit operation](#protection-audit-and-compatibility).
 
 Pandas is optional for the core API: column dicts, lists of row dicts and
-polars DataFrames are accepted too. `dataframe()` returns a pandas DataFrame
-when available, otherwise polars, otherwise a list of row dicts.
-Column labels become strings and must remain unique after conversion. Column
-dicts require equal lengths; row dicts use the ordered union of all keys, with
-missing fields represented by `None`.
+polars DataFrames are also accepted.
 
-### Parquet files and cloud URLs
+### Read and write Parquet
 
-Install the optional dependency with `pip install "pytauargus[parquet]"`
-(pyarrow). Then `protect()` also accepts a path to a `.parquet` file, or an
-`s3://`, `gs://` or `https://` URL to one, instead of a DataFrame:
+With the `parquet` extra, use a local Parquet path or an `s3://`, `gs://`
+or `https://` URL in place of the DataFrame:
 
 ```python
-result = protect("s3://bucket/microdata.parquet",
-                 ["Region", "Sector"], response="Turnover",
-                 safety_rules="NK(2,75)", suppress="OPT(1)")
+from pytauargus import protect
+
+result = protect(
+    "s3://bucket/microdata.parquet",
+    ["Region", "Sector"], response="Turnover",
+    safety_rules="NK(2,75)", suppress="OPT(1)",
+)
 result.tables[0].to_parquet("s3://bucket/protected.parquet")
 ```
 
-`to_parquet` writes the published table: the explanatory columns plus the
-response, with suppressed cells (`U` and `M` status) as null. Cloud
-credentials come from the environment, as pyarrow requires them. The same
-inputs and outputs work from the command line (`protect` verb below).
+`to_parquet()` writes the dimension columns and response, with suppressed
+cells as null. Cloud credentials come from the environment, as required by
+pyarrow.
 
-A runnable example lives in
-[`data/examples/parquet/`](../../data/examples/parquet/): `micro.parquet`
-holds eight records crossing Sector and Geo, and
-
-```bash
-tauargus protect data/examples/parquet/micro.parquet \
-    --tables 'Sector,Geo' --response Value \
-    --safety 'NK(1,80)' --suppress 'OPT(1)' --out protected.parquet
-```
-
-protects it. The output `protected.parquet` keeps every published value and
-writes the unsafe `(Alpha, East)` cell, plus the cells OPT suppresses to hide
-it, as null.
-
-### Existing batch files
-
-Put the data (`.asc`), its metadata (`.rda`) and a batch file in one folder.
-Paths in a batch file are relative to the working directory.
-
-```text
-<OPENMICRODATA> "tau_testW.asc"
-<OPENMETADATA>  "tau_testW.rda"
-<SPECIFYTABLE>  "Size""Region"|"Var2"||
-<SAFETYRULE>    NK(2,75)|NK(0,0)
-<READMICRODATA>
-<SUPPRESS>      MOD(1)
-<WRITETABLE>    (1,3,AS-,"safe-table.txt")
-```
-
-```bash
-tauargus run demo.arb
-```
-
-This reads the microdata, builds the Size x Region table of `Var2`, flags cells
-failing the dominance rule `NK(2,75)` (two largest contributors may not make up
-more than 75 %), applies secondary suppression with the modular method, and
-writes the protected table as code/value pairs, with suppressed values masked.
-The sample inputs are in the repository's
-[data/](../../data/) folder.
-
-## Batch file commands
-
-| Command | Purpose |
-| --------- | --------- |
-| `<OPENMICRODATA>` / `<OPENTABLEDATA>` | Input data file (microdata or a ready table) |
-| `<OPENMETADATA>` | `.rda` metadata describing the file layout and variables |
-| `<SPECIFYTABLE>` | Explanatory variables, response, shadow and cost variables |
-| `<SAFETYRULE>` | Sensitivity rules, e.g. `P(p,n)`, `NK(n,k)`, `FREQ(min,safety)` |
-| `<READMICRODATA>` / `<READTABLE>` | Build or read the tables |
-| `<RECODE>` | Recode a variable, e.g. via a `.grc` file |
-| `<SUPPRESS>` | Protection method: `GH`, `MOD`, `OPT`, `NET`, `RND` (rounding), `CTA` |
-| `<WRITETABLE>` | Export: `(TabNo,Type,Options,"file")`; types 1 CSV, 2 pivot CSV, 3 code/value, 4 SBS, 5 intermediate, 6 JJ |
-| `<SOLVER>` | Accepted for compatibility; only HiGHS is used. Other names log a warning |
-| `<LOGBOOK>` | Write a log file |
-
-The grammar and parameters follow the legacy Tau-Argus 4.1 manual.
-
-## Command line
-
-```bash
-tauargus run      batch.arb   # execute the whole batch
-tauargus explore  batch.arb   # load data + metadata, list variables
-tauargus compute  batch.arb   # table computation only
-tauargus suppress batch.arb   # compute, then apply suppression
-tauargus round    batch.arb   # compute, then round
-tauargus audit    batch.arb   # feasibility intervals of suppressed cells
-tauargus save     batch.arb   # compute, then write tables
-tauargus tables   batch.arb   # print a table summary
-tauargus protect  micro.parquet --tables 'Region,Sector' --response Turnover
-version
-```
-
-`protect` runs the whole pipeline on microdata without a batch file: it
-specifies the tables, applies the safety rules and the suppression method,
-and writes the protected table. `--out` names the output; a `.parquet` suffix
-writes a masked Parquet file (requires the `parquet` extra), any other name
-writes the published CSV. `--tables` is repeated for multiple tables;
-`--safety` and `--suppress` take the same rule bodies as the batch file.
-The microdata argument is a `.parquet` path or a cloud URL (`s3://`, `gs://`,
-`https://`).
-
-```bash
-tauargus protect micro.parquet --tables 'Region,Sector' --response Turnover \
-    --safety 'NK(2,75)' --suppress 'OPT(1)' --out protected.parquet
-```
-
-Exit code is 0 on success and non-zero on an error, with a message on stderr,
-so it fits into scripts and pipelines.
-
-## Audit (Intervalle)
-
-A suppressed cell has a range of values it could take while staying consistent
-with the published totals, its **realized lower/upper bounds**, the
-*feasibility interval*. Protection requires sufficient uncertainty to meet the
-configured protection requirements. A narrow interval can reveal the original
-value or constrain it too closely; interval width alone does not establish
-protection. The audit checks for insufficient protection.
-
-In legacy Tau-Argus this ran in a separate `intervalle.exe` (standalone
-Delphi/Pascal executable); Tau-Argus wrote a `.JJ` file, launched it externally
-and read the intervals back. The rewrite ports that logic into the engine
-(`TauAuditJj` in the `csp` module), so it runs in-process over a temporary
-`.JJ` file with nothing external to install:
+### Run an existing batch
 
 ```python
 from pytauargus.engine import run_batch
 
 engine = run_batch("demo.arb")
-rows = engine.audit(0)   # one dict per suppressed cell:
-# {"cell", "min", "max", "value", "status", "unsafe"}
 ```
 
-The realized bounds are stored on the table (readable via `get_table_cell`).
-`tauargus save demo.arb --audit --format intermediate` writes the legacy
-INTERMEDIATE (type-5) audit file with the realized-interval columns.
+For multiple tables, result accessors, batch generators and lower-level
+engine calls, see the
+[Python API guide](https://github.com/trygu/pytauargus/blob/master/docs/python-api.md)
+and [example notebooks](#examples-and-documentation).
 
-## Python API
+## Command-line interface
 
-### DataFrame protection
+The `tauargus` command runs without a display or interactive prompts.
+Choose between direct protection of Parquet microdata and execution of
+existing Tau-Argus batches.
 
-```python
-from pytauargus import protect, ProtectResult, TableResult
+### Protect Parquet microdata
 
-# Multiple tables; scalar options are recycled across them.
-result = protect(
-    micro, [["Region", "Sector"], ["Region"]], response="Turnover",
-    safety_rules="NK(2,75)", suppress="OPT(1)", workdir="multi_table_run",
-)
-assert isinstance(result, ProtectResult)
-assert all(isinstance(table, TableResult) for table in result.tables)
-```
-
-| Argument | Meaning |
-| ---------- | --------- |
-| `tables` | A flat list of explanatory names for one table; a nested list for several |
-| `response` | Required numeric response column; a scalar or one name per table |
-| `safety_rules` | A rule string or per-table list; `None` supplies no rules |
-| `suppress` | Default `"OPT(1)"`; use `"MOD(1)"` for modular suppression. A single string gets each table's correct number |
-| `run=False` | Write `.asc`, `.rda`, `.arb` and return planned output paths without running the engine |
-| `workdir` | Retained directory, resolved from the caller's working directory; returned paths are absolute. Defaults to a new temporary directory |
-
-Explanatory and response names must be unique within each table. The magnitude
-result reserves `freq`, `cost`, `status`, `lower` and `upper` for diagnostics;
-rename colliding source columns before calling `protect()`. Invalid names and
-suppression sequences whose length is neither 1 nor the table count raise
-`ValueError` before any input files are written.
-
-Metadata and table options include `weight_var`, `weighted`, `holding_var`,
-`decimals`, `hrc`, `totcode`, `missing` and `codelist`; see `help(protect)`.
-The high-level API requires a numeric response column; frequency-only tables
-using the batch `<freq>` response use the lower-level API.
-
-`ProtectResult` contains `.tables` in input order, `.engine` after the batch,
-`.files` (`asc`, `rda`, `arb`, `tab1`, …) and `.workdir`. With `run=False`,
-`.tables` is empty and `.engine` is `None`; the planned `.tab` files are not
-created by that call. Files persist so callers can inspect them and choose
-when to remove them.
-
-| `TableResult` accessor | Returns |
-| ------------------------ | --------- |
-| `safe(unsafe_marker="x")` | Response values with primary `U` and secondary `M` cells masked |
-| `status()` | One `S`, `U`, `P`, `M` or `E` symbol per cell |
-| `unsafe()` | Original, unmasked responses for analysis |
-| `dataframe()` | Full diagnostic rows, including original responses |
-| `to_parquet(path)` | Write the published table to Parquet, suppressed cells as null (needs the `parquet` extra) |
-| `n_cells`, `columns`, `rows`, `response`, `path` | Result shape, rows and response name |
-
-Use the explanatory columns plus `safe()` to construct the publication table,
-as in the quickstart. `dataframe()` does not mask the response automatically.
-`safe(None)` uses missing values instead of `x`.
-
-Audit is explicit and engine indices are zero-based:
-
-```python
-rows = result.engine.audit(0)  # realized min/max and insufficient-protection flag
-result.engine.write_intermediate_table(0, "audit.tab", with_audit=True)
-```
-
-The `lower` / `upper` columns in the default result are protection levels;
-realized bounds are returned by `audit()`. `TableResult` is a parsed snapshot
-and does not refresh when the engine is audited or modified. Raw intermediates
-and audit reports contain original values and belong with analyst artifacts.
-The list-of-dicts fallback from `dataframe()` is a defensive copy, so editing
-it does not change the result's subsequent `safe()` or `status()` values.
-
-### Existing batches and individual commands
-
-```python
-from pytauargus.engine import run_batch
-
-engine = run_batch("demo.arb")   # parse and execute; returns the Engine
-```
-
-Lower-level pieces: `pytauargus.batch.parse_batch(path)` returns the parsed
-command list, and `pytauargus.engine.Engine` executes commands one at a time.
-
-## Generating batch inputs
-
-`pytauargus` also generates the batch inputs. The generator is a port of
-[rtauargus](https://github.com/InseeFrLab/rtauargus), so it emits the exact
-formats the engine reads:
-
-```python
-from pytauargus.arb import micro_arb
-
-micro_arb(
-    asc_filename="donnees.asc",
-    explanatory_vars=[["REGION"], ["SEXE"]],
-    response_var="CA",
-    safety_rules=["NK(1,85)", "FREQ(3,10)"],
-    suppress="OPT(.)",
-    output_names=["tab1.csv", "tab2.csv"],
-    output_type="1",  # CSV; the generator default is SBS/type 4
-)
-```
-
-`pytauargus.micro.micro_asc_rda` writes the fixed-width `.asc` file and its
-`.rda` metadata. `micro_arb` references those files and writes a `.arb` batch.
-`pytauargus.hrc.write_hrc` writes `.hrc` hierarchy files; the separate
-`pytauargus.rda.write_rda` writer handles metadata text. `protect()` coordinates
-these steps automatically; `protect(..., run=False)` previews the complete
-generated pipeline without running it.
-
-## Example notebooks
-
-`notebooks/` contains three executed, output-saved notebooks that double
-as API documentation (every code cell runs against the verified public API):
-
-| Notebook | Covers |
-| ---------- | -------- |
-| [`01_quickstart`](notebooks/01_quickstart.ipynb) | A DataFrame through `protect()` to a `TableResult`, a masked CSV, then metadata and existing batches |
-| [`02_protection_and_audit`](notebooks/02_protection_and_audit.ipynb) | OPT/MOD DataFrame protection, explicit audit and masked export; batch OPT/MOD/RND |
-| [`03_generators`](notebooks/03_generators.ipynb) | `run=False` file preview, multiple tables, individual writers and custom batch round-trip |
-
-Run them interactively, or headless (the same command CI could use).
-The `notebooks` extra includes pandas for the DataFrame examples:
+Install the `parquet` extra, then specify the dimensions, response, safety
+rule and output:
 
 ```bash
-# interactive
-uv sync --extra notebooks
-uv run --with jupyterlab jupyter lab notebooks/
-
-# headless: execute every notebook and re-save its outputs
-uv run --with nbclient --with nbformat --with ipykernel python notebooks/_run.py
+tauargus protect micro.parquet \
+    --tables 'Region,Sector' --response Turnover \
+    --safety 'NK(2,75)' --suppress 'OPT(1)' --out protected.parquet
 ```
 
-`uv run --with nbclient --with nbformat --with ipykernel pytest -k notebooks`
-executes them as tests too (the test skips when `nbclient` is absent, so the
-default `uv run pytest` gate stays dependency-free).
+The input can also be a cloud URL. A `.parquet` output suffix writes a
+masked Parquet file; other output names write published CSV. Repeat
+`--tables` to request multiple tables. No `.arb` file is needed.
 
-## Building from source
+### Run a legacy batch
 
-The wheel is built from this repo plus a pinned `tauargus-engine` checkout
-(the native engine and the `_tauargus` extension; the pin is the commit
-recorded in `tauargus-engine-rev`). Build the engine first, then the wheel:
+Keep the `.arb` batch and its referenced data and metadata together.
+Run from that directory:
 
 ```bash
-# sibling checkout at the pinned revision (see tauargus-engine-rev)
-git clone --recurse-submodules https://github.com/trygu/tauargus-engine.git
-scripts/sync-venv.sh .venv     # engine -> wheel -> venv, one command
-uv build --wheel               # dist/pytauargus-*.whl
+tauargus run demo.arb
 ```
 
-Point `TAUARGUS_ENGINE_DIR` at a different engine checkout for local engine
-work. Test data (`.arb` batches, microdata, example tables) lives in the
-engine checkout's `data/` directory; the tests read it through
-`TAUARGUS_ENGINE_DIR` (default: the sibling checkout).
+The batch specifies the tables, safety rules, protection methods and output
+files. See the
+[batch-file guide](https://github.com/trygu/pytauargus/blob/master/docs/batch-files.md)
+for a complete batch example, path resolution and supported commands.
 
-## Repository layout
+### Inspect, audit and export
 
-```text
-.
-├── src/pytauargus/    the package (the `tauargus` CLI entry point)
-├── tui/               pytauargus-tui, the interactive Textual terminal UI
-├── tests/             package, CLI and end-to-end tests
-├── notebooks/         example notebooks
-├── docs/              TUI user guide and design notes
-└── tauargus-engine-rev   pinned tauargus-engine commit (wheel build input)
+```bash
+tauargus explore demo.arb
+tauargus tables demo.arb
+tauargus audit demo.arb
+tauargus save demo.arb --format csv --out protected.csv
+tauargus save demo.arb --audit --format intermediate --out audit.tab
 ```
 
-## Protection regression tests
+Each command starts a new engine run. Batch-based commands such as `tables`,
+`audit` and `save` execute the batch before their additional action; they
+do not continue a previous CLI session. An INTERMEDIATE audit export is
+diagnostic output containing original values.
 
-`uv run pytest tests/test_protection_e2e.py` runs OPT and MOD on two cases.
-The `ex1` tabular case checks the legacy 20% manual protection margin,
-confirms that the original cell is recoverable before secondary suppression,
-and checks its realised lower and upper protection after suppression.
-The microdata case adapts the basic dominance example from
-[GaussSuppression's magnitude-table vignette](https://statisticsnorway.github.io/ssb-gausssuppression/articles/Magnitude_table_suppression.html),
-by Statistics Norway. Contributions are scaled by ten to give integer input;
-each row is treated as an independent contribution, without company IDs or
-hierarchies. It checks the four cells selected by the 80% dominance rule.
+Use `tauargus --help` to list commands and `tauargus <command> --help`
+for options. The
+[CLI reference](https://github.com/trygu/pytauargus/blob/master/docs/batch-files.md#cli-commands)
+also covers explicit suppression, rounding and apriori edits.
 
-Both cases run the feasibility audit and read back a CSV containing only
-dimensions and masked publication values. Primary and secondary suppressed
-values must be masked, and unmasked values must be retained. The tests do
-not require a particular secondary suppression pattern and do not compare
-results against the Gauss algorithm. They cover these two examples, not
-singleton knowledge, linked-table disclosure or general statistical safety.
+### Scripts, containers and batch services
+
+The CLI returns exit code 0 on successful execution; errors are written to
+stderr with a non-zero exit code. An audit reporting under-protected cells
+still returns 0: inspect its findings separately.
+
+The bundled engine and solver work in containers and CI without a licensed
+solver or display. Linux wheels require glibc 2.28 or newer.
+Run independent jobs in separate processes and working/output directories;
+concurrent engine calls within one process are not validated.
+
+## Interactive terminal UI
+
+`tauargus-tui` opens existing `.arb` batches in an interactive table view.
+Use it to inspect cell values and safety status, make draft cell marks and
+preview changes before accepting them.
+
+Install the `tui` extra, then launch:
+
+```bash
+tauargus-tui                         # browse batches and saved workspaces
+tauargus-tui path/to/batch.arb        # open a batch
+tauargus-tui path/to/batch.workspace.json  # reopen a workspace
+```
+
+![Table view with cells coloured by safety status](https://raw.githubusercontent.com/trygu/pytauargus/master/docs/tui-images/02-table0-unsafe.png)
+
+A typical session:
+
+1. Open a batch and browse its computed tables.
+2. Inspect a cell's value and status; mark cells for suppression or retention.
+3. Preview OPT suppression or RND rounding on a temporary copy.
+4. Accept or cancel the preview, then run an audit to inspect feasibility intervals.
+5. Save the workspace, or write a replay batch for headless execution.
+
+The grid shows the first two dimensions and original responses, including
+after rounding. Its `o` export writes a diagnostic INTERMEDIATE `.tab`,
+so select publication output explicitly through the Python API or CLI.
+Reopening a workspace or replaying a batch reruns the recipe and does not
+guarantee identical numerical results.
+
+See the [TUI overview](https://github.com/trygu/pytauargus/blob/master/tui/README.md)
+for capabilities and limitations, and the
+[full user guide](https://github.com/trygu/pytauargus/blob/master/docs/tui.md)
+for keys, statuses, workspaces and replay.
+
+## Protection, audit and compatibility
+
+Primary suppression hides sensitive cells, such as cells with few
+contributors or a dominant respondent. Secondary suppression hides additional
+cells so totals cannot reveal the primary cells, while minimising information
+loss. Controlled rounding is an alternative protection method.
+
+An audit checks whether suppressed cells have sufficient uncertainty under
+the configured protection requirements. It calculates realised lower and upper
+bounds consistent with the published totals. It runs in-process, with no
+separate `intervalle.exe` installation.
+
+From Python, audit the first table explicitly:
+
+```python
+rows = result.engine.audit(0)  # zero-based table index
+```
+
+From the CLI, use `tauargus audit demo.arb`; in the TUI, press `a`.
+These calls audit the table produced by each workflow. Raw tables and audit
+reports contain original values and should be kept with analyst artifacts.
+
+The project uses the legacy Tau-Argus 4.1 batch grammar and file formats as
+references. It does not guarantee complete feature compatibility or identical
+suppression patterns. HiGHS can choose different secondary suppressions from
+the legacy CPLEX backend. WRITETABLE types 6 (JJ) and 7 (CKM) are not implemented.
+
+See [compatibility and validation](https://github.com/trygu/pytauargus/blob/master/docs/compatibility.md)
+for method support, regression coverage, legacy comparisons and operational limits.
+
+## Examples and documentation
+
+| Resource | Contents |
+| --- | --- |
+| [Quickstart notebook](https://github.com/trygu/pytauargus/blob/master/notebooks/01_quickstart.ipynb) | DataFrame protection, masked CSV, metadata and existing batches |
+| [Protection and audit notebook](https://github.com/trygu/pytauargus/blob/master/notebooks/02_protection_and_audit.ipynb) | OPT/MOD, explicit audit, masked export and batch rounding |
+| [Generators notebook](https://github.com/trygu/pytauargus/blob/master/notebooks/03_generators.ipynb) | Generated inputs, multiple tables and custom batches |
+| [Python API guide](https://github.com/trygu/pytauargus/blob/master/docs/python-api.md) | Arguments, results, diagnostics and generators |
+| [Batch files and CLI](https://github.com/trygu/pytauargus/blob/master/docs/batch-files.md) | Batch example, syntax and CLI commands |
+| [TUI user guide](https://github.com/trygu/pytauargus/blob/master/docs/tui.md) | Interactive workflow and keyboard reference |
+| [Compatibility and validation](https://github.com/trygu/pytauargus/blob/master/docs/compatibility.md) | Supported methods, numerical differences and test scope |
+| [Development](https://github.com/trygu/pytauargus/blob/master/docs/development.md) | Source builds, repository layout, tests and running notebooks |
+
+The native engine and thin bindings live in
+[tauargus-engine](https://github.com/trygu/tauargus-engine).
+The R front-end is [rtauargus](https://github.com/trygu/rtauargus.native).
 
 ## Acknowledgements
 
