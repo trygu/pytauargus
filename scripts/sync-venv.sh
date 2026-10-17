@@ -27,6 +27,10 @@ VENV_PY="$VENV/bin/python"
 
 REPO="$(pwd)"
 ENGINE="${TAUARGUS_ENGINE_DIR:-$(cd "$REPO/.." && pwd)/tauargus-engine}"
+# Export so the wheel build (CMakeLists.txt reads TAUARGUS_ENGINE_DIR,
+# defaulting to ./tauargus-engine) uses the same pinned checkout as the
+# gate and the engine build above.
+export TAUARGUS_ENGINE_DIR="$ENGINE"
 PIN="$(git -C "$REPO" ls-tree HEAD tauargus-engine | awk '{print $3}')"
 HEAD="$(git -C "$ENGINE" rev-parse HEAD)"
 if [[ -z "${TAUARGUS_ALLOW_ENGINE_DRIFT:-}" && "$HEAD" != "$PIN" ]]; then
