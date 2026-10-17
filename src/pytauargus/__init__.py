@@ -9,10 +9,18 @@ The native engine (C++ core + HiGHS-backed solvers) is exposed through the
 compiled extension ``pytauargus._tauargus``.
 """
 
+from importlib.metadata import PackageNotFoundError, version as dist_version
+
 from ._tauargus import TauArgus, HiTaSCtrl, RounderCtrl, engine_meta  # noqa: F401
 from .protect import protect, ProtectResult  # noqa: F401
 
-__version__ = "0.5.3"
+try:
+    # The installed distribution is the source of truth (pyproject.toml at
+    # build time), so a stale hardcoded version can no longer ship.
+    __version__ = dist_version("pytauargus")
+except PackageNotFoundError:
+    # Uninstalled source checkout with no distribution metadata.
+    __version__ = "0.5.7"
 __all__ = [
     "TauArgus", "HiTaSCtrl", "RounderCtrl", "Engine", "engine_meta",
     "write_hrc", "HrcError", "protect", "ProtectResult", "TableResult",
