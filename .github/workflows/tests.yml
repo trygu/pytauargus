@@ -1,8 +1,8 @@
 # Build the pinned engine and run the package test suite on every push and
-# PR. (Wheel building and releasing live in wheels.yml and run only on
-# py-v* tags.)
+# PR. (Wheel building lives in wheels.yml, which also runs on PRs;
+# publishing stays gated on py-v* tags.)
 
-name: tests
+name: Python — Source tests
 
 on:
   # PRs already run on the branch head; the push trigger only verifies
@@ -18,12 +18,15 @@ concurrency:
 
 jobs:
   test:
-    name: ${{ matrix.os }}
+    name: Test source package — ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+        include:
+          - { os: ubuntu-24.04, label: "Linux x86_64" }
+          - { os: ubuntu-24.04-arm, label: "Linux arm64" }
+          - { os: macos-15, label: "macOS arm64" }
     env:
       TAUARGUS_ENGINE_DIR: ${{ github.workspace }}/tauargus-engine
     steps:
