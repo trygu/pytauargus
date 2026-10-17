@@ -990,32 +990,54 @@ jobs:
           import ctypes, sysconfig
           from ctypes import wintypes
 
-          kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-          psapi = ctypes.WinDLL("psapi")
-          kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-          kernel32.GetModuleFileNameExW.restype = wintypes.DWORD
-          kernel32.GetModuleFileNameExW.argtypes = [
-              wintypes.HANDLE, wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
-          psapi.EnumProcessModulesEx.restype = wintypes.BOOL
-          psapi.EnumProcessModulesEx.argtypes = [
-              wintypes.HANDLE, ctypes.POINTER(wintypes.HMODULE),
-              wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), wintypes.DWORD]
+          # Import first: the extension load is what pulls the bundled
+          # engine DLLs into this process.
+          import pytauargus._tauargus as native
 
-          hprocess = kernel32.GetCurrentProcess()
-          arrays = (wintypes.HMODULE * 4096)()
-          needed = wintypes.DWORD()
-          # LIST_MODULES_ALL: include modules of all thread stacks.
-          if not psapi.EnumProcessModulesEx(
-                  hprocess, ctypes.byref(arrays), ctypes.sizeof(arrays),
-                  ctypes.byref(needed), 0x03):
-              raise OSError("EnumProcessModulesEx failed")
+          # GetModuleFileNameExW was removed from kernel32 on newer
+          # Windows (Server 2022+), so enumerate the process modules
+          # with the ToolHelp32 snapshot API, which is current.
+          class MODULEENTRY32W(ctypes.Structure):
+              _fields_ = [
+                  ("dwSize", wintypes.DWORD),
+                  ("th32ModuleID", wintypes.DWORD),
+                  ("th32ProcessID", wintypes.DWORD),
+                  ("GlblcntUsage", wintypes.DWORD),
+                  ("ProccntUsage", wintypes.DWORD),
+                  ("modBaseAddr", ctypes.c_void_p),
+                  ("modBaseSize", wintypes.DWORD),
+                  ("hModule", wintypes.HMODULE),
+                  ("szModule", ctypes.c_wchar * 256),
+                  ("szExePath", ctypes.c_wchar * 260),
+              ]
+
+          kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+          kernel32.CreateToolhelp32Snapshot.argtypes = [
+              wintypes.DWORD, wintypes.DWORD]
+          kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+          kernel32.Module32FirstW.argtypes = [
+              wintypes.HANDLE, ctypes.POINTER(MODULEENTRY32W)]
+          kernel32.Module32FirstW.restype = wintypes.BOOL
+          kernel32.Module32NextW.argtypes = [
+              wintypes.HANDLE, ctypes.POINTER(MODULEENTRY32W)]
+          kernel32.Module32NextW.restype = wintypes.BOOL
+
+          TH32CS_SNAPMODULE = 0x00000008
+          snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0)
+          if snap in (None, 0, -1):
+              raise OSError("CreateToolhelp32Snapshot failed")
+          me = MODULEENTRY32W()
+          me.dwSize = ctypes.sizeof(MODULEENTRY32W)
           loaded = []
-          for h in arrays:
-              if not h:
-                  break
-              buf = ctypes.create_unicode_buffer(4096)
-              kernel32.GetModuleFileNameExW(hprocess, h, buf, 4096)
-              loaded.append(buf.value.lower())
+          if kernel32.Module32FirstW(snap, ctypes.byref(me)):
+              while True:
+                  loaded.append(me.szExePath.lower())
+                  nxt = MODULEENTRY32W()
+                  nxt.dwSize = ctypes.sizeof(MODULEENTRY32W)
+                  if not kernel32.Module32NextW(snap, ctypes.byref(nxt)):
+                      break
+                  me = nxt
+          kernel32.CloseHandle(snap)
           site = sysconfig.get_paths()["purelib"].lower()
           dlls = [l for l in loaded
                   if l.endswith(".dll")
@@ -1027,7 +1049,6 @@ jobs:
           for d in dlls:
               assert d.startswith(site), (
                   f"product DLL loaded from outside the installation: {d}")
-          import pytauargus._tauargus as native
           assert native.__file__.lower().startswith(site), (
               f"native extension outside the installation: {native.__file__}")
           print("all product DLLs load from the installation")
