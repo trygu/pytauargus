@@ -23,3 +23,7 @@ tui/dist/
 *.heu
 *.sta
 CSPlogfile.txt
+# The install test resource's curated existing tests are copied in by
+# the test-resource CI job (or locally for a manual run); they are not
+# committed copies.
+release-tests/existing/

@@ -1,0 +1,9 @@
+// Example 1: a small, readable table (employees by size class x region).
+// (Stor, Nord) holds a single company, so its value would disclose it:
+// that cell is unsafe (U). Press 's' to see OPT find the cells it
+// suppresses to protect it (they turn yellow, the red cell stays).
+<OPENTABLEDATA>  "ex1.tab"
+<OPENMETADATA>   "ex1.rda"
+<SPECIFYTABLE>   "Sto""Reg"|"Var2"||
+<READTABLE> 1T
+<GOINTERACTIVE>
