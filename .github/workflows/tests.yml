@@ -5,8 +5,10 @@
 name: tests
 
 on:
+  # PRs already run on the branch head; the push trigger only verifies
+  # master after a merge (a "**" trigger runs every branch push twice).
   push:
-    branches: ["**"]
+    branches: ["master"]
   pull_request:
   workflow_dispatch:
 
