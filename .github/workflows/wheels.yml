@@ -19,7 +19,7 @@
 # The release job (on tag) aggregates the artifacts into a GitHub Release
 # and, if PyPI publishing is enabled, publishes there too.
 
-name: wheels
+name: Python — Build, installation tests and release
 
 on:
   workflow_dispatch:
@@ -44,7 +44,7 @@ concurrency:
 
 jobs:
   build-macos:
-    name: macos-arm64 py${{ matrix.python }}
+    name: Build wheel — macOS arm64 · Python ${{ matrix.python }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -178,7 +178,7 @@ jobs:
           if-no-files-found: error
 
   build-linux:
-    name: manylinux2028 ${{ matrix.arch }} py${{ matrix.python }}
+    name: Build wheel — Linux ${{ matrix.arch }} (manylinux2028) · Python ${{ matrix.python }}
     runs-on: ${{ matrix.runner }}
     container:
       image: quay.io/pypa/manylinux_2_28_${{ matrix.arch }}:latest
@@ -387,7 +387,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
-    name: windows py${{ matrix.python }}
+    name: Build wheel — Windows x86_64 · Python ${{ matrix.python }}
     runs-on: windows-2022
     strategy:
       fail-fast: false
@@ -528,7 +528,7 @@ jobs:
   # Released in lockstep with pytauargus (same version, same py-v* trigger).
   # ---------------------------------------------------------------------------
   build-tui:
-    name: build pytauargus-tui wheel
+    name: Build TUI wheel
     runs-on: ubuntu-24.04
     # The TUI wheel is exercised by the install jobs, which install it
     # together with the pytauargus wheel of THIS run (the TUI declares an
@@ -625,7 +625,7 @@ jobs:
   # ---------------------------------------------------------------------------
 
   test-resource:
-    name: assemble install test resource
+    name: Prepare test resources
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -657,7 +657,7 @@ jobs:
           if-no-files-found: error
 
   install-linux-x86_64:
-    name: install test linux x86_64
+    name: Test installed package — Linux x86_64
     runs-on: ubuntu-24.04
     container:
       # Install on the old glibc runner image, not the manylinux build
@@ -752,7 +752,7 @@ jobs:
             pytauargus-tui --help
 
   install-linux-aarch64:
-    name: install test linux aarch64
+    name: Test installed package — Linux arm64
     runs-on: ubuntu-24.04-arm
     container:
       image: ubuntu:22.04
@@ -837,7 +837,7 @@ jobs:
             pytauargus-tui --help
 
   install-macos-arm64:
-    name: install test macos arm64
+    name: Test installed package — macOS arm64
     runs-on: macos-14
     needs: [build-macos, build-tui, test-resource]
     env:
@@ -925,7 +925,7 @@ jobs:
             pytauargus-tui --help
 
   install-windows:
-    name: install test windows x86_64
+    name: Test installed package — Windows x86_64
     runs-on: windows-2022
     needs: [build-windows, build-tui, test-resource]
     env:
@@ -1077,7 +1077,7 @@ jobs:
             pytauargus-tui --help
 
   release:
-    name: Publish release
+    name: Publish tested artifacts
     needs: [build-macos, build-linux, build-windows, build-tui,
             install-linux-x86_64, install-linux-aarch64,
             install-macos-arm64, install-windows]
