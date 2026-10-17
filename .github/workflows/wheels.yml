@@ -61,6 +61,7 @@ jobs:
       # The engine pin is the submodule gitlink in this repo; the checkout
       # above places it at ./tauargus-engine (nested submodules included).
       - name: Read engine pin
+        shell: bash
         run: echo "ENGINE_REV=$(git -C tauargus-engine rev-parse HEAD)" >> "$GITHUB_ENV"
 
       # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
@@ -199,6 +200,7 @@ jobs:
       # The engine pin is the submodule gitlink in this repo; the checkout
       # above places it at ./tauargus-engine (nested submodules included).
       - name: Read engine pin
+        shell: bash
         run: echo "ENGINE_REV=$(git -C tauargus-engine rev-parse HEAD)" >> "$GITHUB_ENV"
 
       # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
@@ -240,6 +242,7 @@ jobs:
           echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
 
       - name: Build engine superbuild
+        shell: bash
         run: |
           set -euo pipefail
           cmake -S tauargus-engine/engine -B tauargus-engine/engine/build \
@@ -257,6 +260,7 @@ jobs:
       # to the extension) plus the HiGHS prefix, so only libhighs is
       # grafted, exactly once.
       - name: Normalize engine lib RUNPATH for the wheel
+        shell: bash
         run: |
           set -euo pipefail
           HIGHS_LIBDIR="$(dirname "$(find "${{ steps.highs.outputs.prefix }}" -name 'libhighs.so.1*' -type f | head -n1)")"
@@ -276,6 +280,7 @@ jobs:
             . --no-deps -w wheelhouse
 
       - name: Repair wheel (bundle HiGHS)
+        shell: bash
         run: |
           set -euo pipefail
           auditwheel repair wheelhouse/*.whl -w repaired
@@ -286,6 +291,7 @@ jobs:
       # missed this for the R binaries; the 0.5.5 wheel's bundled
       # libhighs needed the host libstdc++).
       - name: Verify no host C++ runtime dependency
+        shell: bash
         run: |
           set -eu
           TMP="$(mktemp -d)"
@@ -395,6 +401,7 @@ jobs:
       # The engine pin is the submodule gitlink in this repo; the checkout
       # above places it at ./tauargus-engine (nested submodules included).
       - name: Read engine pin
+        shell: bash
         run: echo "ENGINE_REV=$(git -C tauargus-engine rev-parse HEAD)" >> "$GITHUB_ENV"
 
       # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
@@ -665,6 +672,7 @@ jobs:
       PYTHONPATH:
     steps:
       - name: Install system deps (uv needs TLS certs)
+        shell: bash
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates
@@ -686,6 +694,7 @@ jobs:
           path: install-tests
 
       - name: Fresh venv (path with a space) and install
+        shell: bash
         run: |
           set -euo pipefail
           WORK="$HOME/arb install/work"
@@ -702,6 +711,7 @@ jobs:
           "$WORK/venv/bin/python" -c "import pytauargus; print('installed ok')"
 
       - name: Read expectations from the build manifest
+        shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -718,6 +728,7 @@ jobs:
           PY
 
       - name: Run the installed-package tests
+        shell: bash
         run: |
           set -euo pipefail
           WORK="$HOME/arb install/work"
@@ -725,6 +736,7 @@ jobs:
           "$WORK/venv/bin/python" -m pytest . -q -rs
 
       - name: Test the uvx entry point (local wheels only)
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p uvwheels
@@ -732,7 +744,7 @@ jobs:
           # Exact version pin: uvx can never resolve a different product
           # version from PyPI; the TUI's native dependency is exact too.
           uvx --find-links uvwheels \
-            --from "pytauargus-tui=${TAUARGUS_EXPECTED_TUI_VERSION}" \
+            --from "pytauargus-tui==${TAUARGUS_EXPECTED_TUI_VERSION}" \
             pytauargus-tui --help
 
   install-linux-aarch64:
@@ -746,6 +758,7 @@ jobs:
       PYTHONPATH:
     steps:
       - name: Install system deps (uv needs TLS certs)
+        shell: bash
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates
@@ -767,6 +780,7 @@ jobs:
           path: install-tests
 
       - name: Fresh venv (path with a space) and install
+        shell: bash
         run: |
           set -euo pipefail
           WORK="$HOME/arb install/work"
@@ -780,6 +794,7 @@ jobs:
           "$WORK/venv/bin/python" -c "import pytauargus; print('installed ok')"
 
       - name: Read expectations from the build manifest
+        shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -796,6 +811,7 @@ jobs:
           PY
 
       - name: Run the installed-package tests
+        shell: bash
         run: |
           set -euo pipefail
           WORK="$HOME/arb install/work"
@@ -803,12 +819,13 @@ jobs:
           "$WORK/venv/bin/python" -m pytest . -q -rs
 
       - name: Test the uvx entry point (local wheels only)
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p uvwheels
           cp wheels-native/*.whl wheels-tui/*.whl uvwheels/
           uvx --find-links uvwheels \
-            --from "pytauargus-tui=${TAUARGUS_EXPECTED_TUI_VERSION}" \
+            --from "pytauargus-tui==${TAUARGUS_EXPECTED_TUI_VERSION}" \
             pytauargus-tui --help
 
   install-macos-arm64:
@@ -893,7 +910,7 @@ jobs:
           mkdir -p uvwheels
           cp wheels-native/*.whl wheels-tui/*.whl uvwheels/
           uvx --find-links uvwheels \
-            --from "pytauargus-tui=${TAUARGUS_EXPECTED_TUI_VERSION}" \
+            --from "pytauargus-tui==${TAUARGUS_EXPECTED_TUI_VERSION}" \
             pytauargus-tui --help
 
   install-windows:
@@ -1021,7 +1038,7 @@ jobs:
           mkdir -p uvwheels
           cp wheels-native/*.whl wheels-tui/*.whl uvwheels/
           uvx --find-links uvwheels \
-            --from "pytauargus-tui=${TAUARGUS_EXPECTED_TUI_VERSION}" \
+            --from "pytauargus-tui==${TAUARGUS_EXPECTED_TUI_VERSION}" \
             pytauargus-tui --help
 
   release:
