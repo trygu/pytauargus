@@ -1025,7 +1025,6 @@ jobs:
             pytauargus-tui --help
 
   release:
-  release:
     name: Publish release
     needs: [build-macos, build-linux, build-windows, build-tui,
             install-linux-x86_64, install-linux-aarch64,
