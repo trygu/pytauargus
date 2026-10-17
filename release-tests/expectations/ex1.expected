@@ -1,0 +1,34 @@
+# Ex1 expectations, shared by the Python and R installed-distribution
+# tests. Hand-derived from the fixture inputs (ex1.tab, ex1.rda) and the
+# documented legacy defaults; not generated from a run of the code under
+# test.
+#
+# The table is 3 size classes x 3 regions plus computed totals (16 cells).
+# Every input cell carries the manual status S except (Stor, Nord), which
+# is explicitly marked U in ex1.tab. With no SAFETYRULE in the batch, the
+# manual status is the only source of unsafety.
+#
+# (Stor, Nord) = 150 is the manual primary suppression. The legacy default
+# manual margin is 20% of the cell value, so its lower and upper
+# protection requirements are both 30.
+#
+# CELL <row>;<col> <response> <status>   (status before suppression;
+#                                         Total row/col come first)
+CELL Total;Total 1080 S
+CELL Total;Ost 465 S
+CELL Total;Vest 360 S
+CELL Total;Nord 255 S
+CELL Liten;Total 100 S
+CELL Liten;Ost 45 S
+CELL Liten;Vest 30 S
+CELL Liten;Nord 25 S
+CELL Mellom;Total 290 S
+CELL Mellom;Ost 120 S
+CELL Mellom;Vest 90 S
+CELL Mellom;Nord 80 S
+CELL Stor;Total 690 S
+CELL Stor;Ost 300 S
+CELL Stor;Vest 240 S
+CELL Stor;Nord 150 U
+# PRIMARY <row>;<col> <response> <required_protection>
+PRIMARY Stor;Nord 150 30

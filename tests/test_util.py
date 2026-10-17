@@ -66,7 +66,9 @@ def test_norm_path_absolute():
 def test_norm_path_tilde(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     home = os.path.expanduser("~")
-    assert norm_path("~/t3.csv") == os.path.join(home, "t3.csv")
+    # expanduser on Windows keeps the input separator of the remainder
+    # (C:\Users\radmin/t3.csv); normalize before comparing
+    assert os.path.normpath(norm_path("~/t3.csv")) == os.path.join(home, "t3.csv")
     assert norm_path("~") == home
 
 

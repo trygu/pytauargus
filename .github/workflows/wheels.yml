@@ -25,6 +25,9 @@ on:
   workflow_dispatch:
   push:
     tags: ["py-v*"]
+  # PRs get the full build + installed-artifact test report; publishing
+  # stays gated on the py-v* tag (the release job's `if`).
+  pull_request:
 
 concurrency:
   group: wheels-${{ github.ref }}
@@ -47,7 +50,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-14]
-        python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+        # The PR report builds one CPython per platform (3.12); tag runs
+        # build the full supported matrix.
+        python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,6 +61,7 @@ jobs:
       # The engine pin is the submodule gitlink in this repo; the checkout
       # above places it at ./tauargus-engine (nested submodules included).
       - name: Read engine pin
+        shell: bash
         run: echo "ENGINE_REV=$(git -C tauargus-engine rev-parse HEAD)" >> "$GITHUB_ENV"
 
       # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
@@ -121,11 +127,54 @@ jobs:
           delocate-listdeps wheelhouse/*.whl || true
           delocate-wheel -w repaired wheelhouse/*.whl
 
+      - name: Write artifact manifest
+        shell: bash
+        env:
+          MANIFEST_ARTIFACT: pytauargus-macos-arm64-py${{ matrix.python }}
+          MANIFEST_PRODUCT: pytauargus
+          MANIFEST_PLATFORM: macosx_arm64
+          MANIFEST_PYTHON: py${{ matrix.python }}
+          MANIFEST_WHEEL_DIR: repaired
+          MANIFEST_PYPROJECT: pyproject.toml
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, tomllib
+          wheel_dir = pathlib.Path(os.environ["MANIFEST_WHEEL_DIR"])
+          version = tomllib.load(
+              open(os.environ.get("MANIFEST_PYPROJECT", "pyproject.toml"), "rb"),
+          )["project"]["version"]
+          files = []
+          for p in sorted(wheel_dir.glob("*.whl")):
+              data = p.read_bytes()
+              if not data:
+                  raise SystemExit(f"empty wheel: {p}")
+              files.append({"name": p.name,
+                            "sha256": hashlib.sha256(data).hexdigest(),
+                            "size": len(data)})
+          if not files:
+              raise SystemExit("no wheels to manifest")
+          manifest = {
+              "artifact": os.environ["MANIFEST_ARTIFACT"],
+              "product": os.environ["MANIFEST_PRODUCT"],
+              "version": version,
+              "product_commit": os.environ["GITHUB_SHA"],
+              "engine_sha": os.environ["ENGINE_REV"],
+              "highs_version": os.environ["HIGHS_TAG"],
+              "platform": os.environ["MANIFEST_PLATFORM"],
+              "python": os.environ["MANIFEST_PYTHON"],
+              "files": files,
+          }
+          out = wheel_dir / f"manifest-{manifest['artifact']}.json"
+          out.write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
           name: pytauargus-macos-arm64-py${{ matrix.python }}
-          path: repaired/*.whl
+          path: repaired
           if-no-files-found: error
 
   build-linux:
@@ -136,7 +185,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["cp310-cp310", "cp311-cp311", "cp312-cp312", "cp313-cp313", "cp314-cp314", "cp315-cp315"]
+        python: ${{ github.event_name == 'pull_request' && fromJSON('["cp312-cp312"]') || fromJSON('["cp310-cp310", "cp311-cp311", "cp312-cp312", "cp313-cp313", "cp314-cp314", "cp315-cp315"]') }}
         arch: [x86_64, aarch64]
         include:
           - arch: x86_64
@@ -151,6 +200,7 @@ jobs:
       # The engine pin is the submodule gitlink in this repo; the checkout
       # above places it at ./tauargus-engine (nested submodules included).
       - name: Read engine pin
+        shell: bash
         run: echo "ENGINE_REV=$(git -C tauargus-engine rev-parse HEAD)" >> "$GITHUB_ENV"
 
       # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
@@ -192,6 +242,7 @@ jobs:
           echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
 
       - name: Build engine superbuild
+        shell: bash
         run: |
           set -euo pipefail
           cmake -S tauargus-engine/engine -B tauargus-engine/engine/build \
@@ -209,6 +260,7 @@ jobs:
       # to the extension) plus the HiGHS prefix, so only libhighs is
       # grafted, exactly once.
       - name: Normalize engine lib RUNPATH for the wheel
+        shell: bash
         run: |
           set -euo pipefail
           HIGHS_LIBDIR="$(dirname "$(find "${{ steps.highs.outputs.prefix }}" -name 'libhighs.so.1*' -type f | head -n1)")"
@@ -228,6 +280,7 @@ jobs:
             . --no-deps -w wheelhouse
 
       - name: Repair wheel (bundle HiGHS)
+        shell: bash
         run: |
           set -euo pipefail
           auditwheel repair wheelhouse/*.whl -w repaired
@@ -238,6 +291,7 @@ jobs:
       # missed this for the R binaries; the 0.5.5 wheel's bundled
       # libhighs needed the host libstdc++).
       - name: Verify no host C++ runtime dependency
+        shell: bash
         run: |
           set -eu
           TMP="$(mktemp -d)"
@@ -283,11 +337,53 @@ jobs:
             exit 1
           fi
 
+      - name: Write artifact manifest
+        env:
+          MANIFEST_ARTIFACT: pytauargus-manylinux-${{ matrix.arch }}-py${{ matrix.python }}
+          MANIFEST_PRODUCT: pytauargus
+          MANIFEST_PLATFORM: manylinux_2_28_${{ matrix.arch }}
+          MANIFEST_PYTHON: py${{ matrix.python }}
+          MANIFEST_WHEEL_DIR: repaired
+          MANIFEST_PYPROJECT: pyproject.toml
+        run: |
+          set -euo pipefail
+          /opt/python/${{ matrix.python }}/bin/python3 - <<'PY'
+          import hashlib, json, os, pathlib, tomllib
+          wheel_dir = pathlib.Path(os.environ["MANIFEST_WHEEL_DIR"])
+          version = tomllib.load(
+              open(os.environ.get("MANIFEST_PYPROJECT", "pyproject.toml"), "rb"),
+          )["project"]["version"]
+          files = []
+          for p in sorted(wheel_dir.glob("*.whl")):
+              data = p.read_bytes()
+              if not data:
+                  raise SystemExit(f"empty wheel: {p}")
+              files.append({"name": p.name,
+                            "sha256": hashlib.sha256(data).hexdigest(),
+                            "size": len(data)})
+          if not files:
+              raise SystemExit("no wheels to manifest")
+          manifest = {
+              "artifact": os.environ["MANIFEST_ARTIFACT"],
+              "product": os.environ["MANIFEST_PRODUCT"],
+              "version": version,
+              "product_commit": os.environ["GITHUB_SHA"],
+              "engine_sha": os.environ["ENGINE_REV"],
+              "highs_version": os.environ["HIGHS_TAG"],
+              "platform": os.environ["MANIFEST_PLATFORM"],
+              "python": os.environ["MANIFEST_PYTHON"],
+              "files": files,
+          }
+          out = wheel_dir / f"manifest-{manifest['artifact']}.json"
+          out.write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
           name: pytauargus-manylinux-${{ matrix.arch }}-py${{ matrix.python }}
-          path: repaired/*.whl
+          path: repaired
           if-no-files-found: error
 
   build-windows:
@@ -296,7 +392,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+        python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -305,6 +401,7 @@ jobs:
       # The engine pin is the submodule gitlink in this repo; the checkout
       # above places it at ./tauargus-engine (nested submodules included).
       - name: Read engine pin
+        shell: bash
         run: echo "ENGINE_REV=$(git -C tauargus-engine rev-parse HEAD)" >> "$GITHUB_ENV"
 
       # The HiGHS version is pinned in the engine repo (engine/HiGHS-VERSION),
@@ -371,21 +468,59 @@ jobs:
           HIGHS_BIN="$(cygpath -w "$RUNNER_TEMP/highs-prefix/bin")"
           delvewheel repair --add-path "$ENGINE_BIN;$HIGHS_BIN" -w repaired wheelhouse/*.whl
 
-      - name: Smoke test wheel in a clean venv
+      # The old clean-venv smoke test lived here. It is replaced by the
+      # install-windows job: a separate fresh-venv job that installs this
+      # exact wheel, runs the installed-package tests and executes the
+      # .arb job through the public API.
+
+      - name: Write artifact manifest
         shell: bash
+        env:
+          MANIFEST_ARTIFACT: pytauargus-windows-py${{ matrix.python }}
+          MANIFEST_PRODUCT: pytauargus
+          MANIFEST_PLATFORM: win_amd64
+          MANIFEST_PYTHON: py${{ matrix.python }}
+          MANIFEST_WHEEL_DIR: repaired
+          MANIFEST_PYPROJECT: pyproject.toml
         run: |
           set -euo pipefail
-          python -m venv "$RUNNER_TEMP/smoke"
-          "$RUNNER_TEMP/smoke/Scripts/python.exe" -m pip install repaired/*.whl
-          cd "$RUNNER_TEMP"
-          "$RUNNER_TEMP/smoke/Scripts/tauargus.exe" --version
-          "$RUNNER_TEMP/smoke/Scripts/python.exe" -c "import pytauargus, pytauargus._tauargus as m; print('ok', m.__file__)"
+          python - <<'PY'
+          import hashlib, json, os, pathlib, tomllib
+          wheel_dir = pathlib.Path(os.environ["MANIFEST_WHEEL_DIR"])
+          version = tomllib.load(
+              open(os.environ.get("MANIFEST_PYPROJECT", "pyproject.toml"), "rb"),
+          )["project"]["version"]
+          files = []
+          for p in sorted(wheel_dir.glob("*.whl")):
+              data = p.read_bytes()
+              if not data:
+                  raise SystemExit(f"empty wheel: {p}")
+              files.append({"name": p.name,
+                            "sha256": hashlib.sha256(data).hexdigest(),
+                            "size": len(data)})
+          if not files:
+              raise SystemExit("no wheels to manifest")
+          manifest = {
+              "artifact": os.environ["MANIFEST_ARTIFACT"],
+              "product": os.environ["MANIFEST_PRODUCT"],
+              "version": version,
+              "product_commit": os.environ["GITHUB_SHA"],
+              "engine_sha": os.environ["ENGINE_REV"],
+              "highs_version": os.environ["HIGHS_TAG"],
+              "platform": os.environ["MANIFEST_PLATFORM"],
+              "python": os.environ["MANIFEST_PYTHON"],
+              "files": files,
+          }
+          out = wheel_dir / f"manifest-{manifest['artifact']}.json"
+          out.write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
           name: pytauargus-windows-py${{ matrix.python }}
-          path: repaired/*.whl
+          path: repaired
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
@@ -395,22 +530,16 @@ jobs:
   build-tui:
     name: build pytauargus-tui wheel
     runs-on: ubuntu-24.04
-    # The smoke test verifies the TUI wheel against the pytauargus wheel
-    # built in THIS run (not the last published one on PyPI), so this job
-    # waits for the linux build to produce the reference wheel.
-    needs: [build-linux]
+    # The TUI wheel is exercised by the install jobs, which install it
+    # together with the pytauargus wheel of THIS run (the TUI declares an
+    # exact pytauargus==<version> dependency, so a published version can
+    # never be substituted).
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Download reference engine wheel (this run)
-        uses: actions/download-artifact@v4
-        with:
-          name: pytauargus-manylinux-x86_64-pycp312-cp312
-          path: refengine
 
       - name: Build wheel
         run: |
@@ -426,72 +555,617 @@ jobs:
       - name: Show wheel
         run: ls -la dist
 
-      - name: Smoke test (clean venv; verify pytauargus is pulled in)
+      # The old clean-venv smoke test (which resolved the TUI against the
+      # linux reference wheel of this run) is replaced by the install
+      # jobs, which install the TUI wheel against the pytauargus wheel of
+      # this run and exercise both entry points.
+      - name: Write artifact manifest
+        env:
+          MANIFEST_ARTIFACT: pytauargus-tui-wheel
+          MANIFEST_PRODUCT: pytauargus-tui
+          MANIFEST_PLATFORM: py3-none-any
+          MANIFEST_PYTHON: py3
+          MANIFEST_WHEEL_DIR: dist
+          MANIFEST_PYPROJECT: tui/pyproject.toml
         run: |
           set -euo pipefail
-          python -m venv "$RUNNER_TEMP/smoke"
-          "$RUNNER_TEMP/smoke/bin/pip" install --upgrade pip
-          # Install the pytauargus wheel built in this run alongside the TUI
-          # wheel, so the dependency resolves against the engine that ships
-          # with this release (PyPI may not have that version yet).
-          "$RUNNER_TEMP/smoke/bin/pip" install refengine/*.whl dist/*.whl
-          echo "--- resolved pytauargus ---"
-          "$RUNNER_TEMP/smoke/bin/pip" show pytauargus | grep -E '^(Name|Version):'
-          # Guard: the resolved engine must be this run's build, not PyPI's.
-          RESOLVED="$("$RUNNER_TEMP/smoke/bin/pip" show pytauargus | sed -n 's/^Version: //p')"
-          WANTED="$(python3 -c "import tomllib;print(tomllib.load(open('tui/pyproject.toml','rb'))['project']['version'])")"
-          [ "$RESOLVED" = "$WANTED" ] || { echo "::error::resolved pytauargus $RESOLVED, expected $WANTED"; exit 1; }
-          "$RUNNER_TEMP/smoke/bin/python" -c "import pytauargus, pytauargus_tui; print('import ok, pytauargus', pytauargus.__version__)"
-          # Both entry points: tauargus-tui (human command) and the
-          # package-named alias that `uvx pytauargus-tui` resolves.
-          test -x "$RUNNER_TEMP/smoke/bin/tauargus-tui" \
-            && test -x "$RUNNER_TEMP/smoke/bin/pytauargus-tui" \
-            && echo "entry points ok"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, tomllib
+          wheel_dir = pathlib.Path(os.environ["MANIFEST_WHEEL_DIR"])
+          version = tomllib.load(
+              open(os.environ.get("MANIFEST_PYPROJECT", "pyproject.toml"), "rb"),
+          )["project"]["version"]
+          files = []
+          for p in sorted(wheel_dir.glob("*.whl")):
+              data = p.read_bytes()
+              if not data:
+                  raise SystemExit(f"empty wheel: {p}")
+              files.append({"name": p.name,
+                            "sha256": hashlib.sha256(data).hexdigest(),
+                            "size": len(data)})
+          if not files:
+              raise SystemExit("no wheels to manifest")
+          # Pure-Python wheel: the engine provenance comes from the
+          # pytauargus wheels (the TUI pins pytauargus==<version>).
+          manifest = {
+              "artifact": os.environ["MANIFEST_ARTIFACT"],
+              "product": os.environ["MANIFEST_PRODUCT"],
+              "version": version,
+              "product_commit": os.environ["GITHUB_SHA"],
+              "engine_sha": None,
+              "highs_version": None,
+              "platform": os.environ["MANIFEST_PLATFORM"],
+              "python": os.environ["MANIFEST_PYTHON"],
+              "files": files,
+          }
+          out = wheel_dir / f"manifest-{manifest['artifact']}.json"
+          out.write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
           name: pytauargus-tui-wheel
-          path: dist/*.whl
+          path: dist
           if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Installed-distribution tests: fresh environments, no product checkout,
+  # no compiler. Each job installs the exact wheels of this run (native +
+  # TUI), runs the bundled test resource (existing tests + the portable
+  # .arb fixture job with the native protection audit), and checks the TUI
+# ---------------------------------------------------------------------------
+  # Installed-distribution tests: fresh environments, no product checkout,
+  # no compiler. Each job installs the exact wheels of this run (native +
+  # TUI), runs the bundled test resource (curated existing tests + the
+  # portable .arb fixture job with the native protection audit), checks
+  # the TUI entry point and the uvx entry point, and verifies that the
+  # loaded package comes from the installation.
+  # ---------------------------------------------------------------------------
+
+  test-resource:
+    name: assemble install test resource
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble the test resource
+        run: |
+          set -euo pipefail
+          # The resource ships the runner, the fixture, the expectations
+          # and a curated set of existing tests that exercise the
+          # installed package (no source-tree imports, no engine-repo
+          # data). The existing tests are copied from this commit so the
+          # resource always matches the code the wheels were built from.
+          mkdir -p dist-install-tests
+          cp -r release-tests/. dist-install-tests/
+          rm -rf dist-install-tests/existing
+          mkdir -p dist-install-tests/existing
+          for f in test_meta test_audit test_result test_arb test_rda \
+                   test_micro test_util test_hrc test_dataframe \
+                   test_specify_table_cost_defaults; do
+            cp "tests/${f}.py" dist-install-tests/existing/
+          done
+          find dist-install-tests -type f | sort
+
+      - name: Upload test resource
+        uses: actions/upload-artifact@v4
+        with:
+          name: py-install-tests
+          path: dist-install-tests
+          if-no-files-found: error
+
+  install-linux-x86_64:
+    name: install test linux x86_64
+    runs-on: ubuntu-24.04
+    container:
+      # Install on the old glibc runner image, not the manylinux build
+      # container: the check is a real install on a current distro with
+      # a glibc (2.35) close to the manylinux2028 floor, and the wheel
+      # must load without any compiler.
+      image: ubuntu:22.04
+    needs: [build-linux, build-tui, test-resource]
+    env:
+      # Strip product dev paths; the installed product must not see them.
+      TAUARGUS_ENGINE_DIR:
+      PYTHONPATH:
+    steps:
+      - name: Install system deps (uv needs TLS certs)
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Download artifacts (this run)
+        uses: actions/download-artifact@v4
+        with:
+          name: pytauargus-manylinux-x86_64-pycp312-cp312
+          path: wheels-native
+      - uses: actions/download-artifact@v4
+        with:
+          name: pytauargus-tui-wheel
+          path: wheels-tui
+      - uses: actions/download-artifact@v4
+        with:
+          name: py-install-tests
+          path: install-tests
+
+      - name: Fresh venv (path with a space) and install
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$HOME/arb install/work"
+          rm -rf "$WORK"
+          mkdir -p "$WORK"
+          uv venv --python 3.12 "$WORK/venv"
+          # Explicit local wheels: the TUI's exact pytauargus==<version>
+          # dependency is satisfied by the native wheel of this run, so
+          # pip can never substitute a published package.
+          uv pip install --python "$WORK/venv/bin/python" \
+            wheels-native/*.whl wheels-tui/*.whl
+          uv pip install --python "$WORK/venv/bin/python" \
+            pytest pandas pyarrow
+          "$WORK/venv/bin/python" -c "import pytauargus; print('installed ok')"
+
+      - name: Read expectations from the build manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The container has no python3; use the venv just created.
+          "$HOME/arb install/work/venv/bin/python" - <<'PY'
+          import json, os
+          m = json.load(open(
+              "wheels-native/manifest-pytauargus-manylinux-x86_64-pycp312-cp312.json"))
+          t = json.load(open("wheels-tui/manifest-pytauargus-tui-wheel.json"))
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"TAUARGUS_EXPECTED_ENGINE_SHA={m['engine_sha']}\n")
+              f.write(f"TAUARGUS_EXPECTED_HIGHS={m['highs_version']}\n")
+              f.write(f"TAUARGUS_EXPECTED_VERSION={m['version']}\n")
+              f.write(f"TAUARGUS_EXPECTED_TUI_VERSION={t['version']}\n")
+              f.write(f"TAUARGUS_TEST_VENV={os.environ['HOME']}/arb install/work/venv\n")
+          PY
+
+      - name: Run the installed-package tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$HOME/arb install/work"
+          cd install-tests
+          "$WORK/venv/bin/python" -m pytest . -q -rs
+
+      - name: Test the uvx entry point (local wheels only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p uvwheels
+          cp wheels-native/*.whl wheels-tui/*.whl uvwheels/
+          # Exact version pin: uvx can never resolve a different product
+          # version from PyPI; the TUI's native dependency is exact too.
+          uvx --find-links uvwheels \
+            --from "pytauargus-tui==${TAUARGUS_EXPECTED_TUI_VERSION}" \
+            pytauargus-tui --help
+
+  install-linux-aarch64:
+    name: install test linux aarch64
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: ubuntu:22.04
+    needs: [build-linux, build-tui, test-resource]
+    env:
+      TAUARGUS_ENGINE_DIR:
+      PYTHONPATH:
+    steps:
+      - name: Install system deps (uv needs TLS certs)
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Download artifacts (this run)
+        uses: actions/download-artifact@v4
+        with:
+          name: pytauargus-manylinux-aarch64-pycp312-cp312
+          path: wheels-native
+      - uses: actions/download-artifact@v4
+        with:
+          name: pytauargus-tui-wheel
+          path: wheels-tui
+      - uses: actions/download-artifact@v4
+        with:
+          name: py-install-tests
+          path: install-tests
+
+      - name: Fresh venv (path with a space) and install
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$HOME/arb install/work"
+          rm -rf "$WORK"
+          mkdir -p "$WORK"
+          uv venv --python 3.12 "$WORK/venv"
+          uv pip install --python "$WORK/venv/bin/python" \
+            wheels-native/*.whl wheels-tui/*.whl
+          uv pip install --python "$WORK/venv/bin/python" \
+            pytest pandas pyarrow
+          "$WORK/venv/bin/python" -c "import pytauargus; print('installed ok')"
+
+      - name: Read expectations from the build manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The container has no python3; use the venv just created.
+          "$HOME/arb install/work/venv/bin/python" - <<'PY'
+          import json, os
+          m = json.load(open(
+              "wheels-native/manifest-pytauargus-manylinux-aarch64-pycp312-cp312.json"))
+          t = json.load(open("wheels-tui/manifest-pytauargus-tui-wheel.json"))
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"TAUARGUS_EXPECTED_ENGINE_SHA={m['engine_sha']}\n")
+              f.write(f"TAUARGUS_EXPECTED_HIGHS={m['highs_version']}\n")
+              f.write(f"TAUARGUS_EXPECTED_VERSION={m['version']}\n")
+              f.write(f"TAUARGUS_EXPECTED_TUI_VERSION={t['version']}\n")
+              f.write(f"TAUARGUS_TEST_VENV={os.environ['HOME']}/arb install/work/venv\n")
+          PY
+
+      - name: Run the installed-package tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$HOME/arb install/work"
+          cd install-tests
+          "$WORK/venv/bin/python" -m pytest . -q -rs
+
+      - name: Test the uvx entry point (local wheels only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p uvwheels
+          cp wheels-native/*.whl wheels-tui/*.whl uvwheels/
+          uvx --find-links uvwheels \
+            --from "pytauargus-tui==${TAUARGUS_EXPECTED_TUI_VERSION}" \
+            pytauargus-tui --help
+
+  install-macos-arm64:
+    name: install test macos arm64
+    runs-on: macos-14
+    needs: [build-macos, build-tui, test-resource]
+    env:
+      TAUARGUS_ENGINE_DIR:
+      PYTHONPATH:
+    steps:
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Download artifacts (this run)
+        uses: actions/download-artifact@v4
+        with:
+          name: pytauargus-macos-arm64-py3.12
+          path: wheels-native
+      - uses: actions/download-artifact@v4
+        with:
+          name: pytauargus-tui-wheel
+          path: wheels-tui
+      - uses: actions/download-artifact@v4
+        with:
+          name: py-install-tests
+          path: install-tests
+
+      - name: Fresh venv (path with a space) and install
+        run: |
+          set -euo pipefail
+          WORK="$HOME/arb install/work"
+          rm -rf "$WORK"
+          mkdir -p "$WORK"
+          uv venv --python 3.12 "$WORK/venv"
+          uv pip install --python "$WORK/venv/bin/python" \
+            wheels-native/*.whl wheels-tui/*.whl
+          uv pip install --python "$WORK/venv/bin/python" \
+            pytest pandas pyarrow
+          "$WORK/venv/bin/python" -c "import pytauargus; print('installed ok')"
+
+      - name: Read expectations from the build manifest
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          m = json.load(open(
+              "wheels-native/manifest-pytauargus-macos-arm64-py3.12.json"))
+          t = json.load(open("wheels-tui/manifest-pytauargus-tui-wheel.json"))
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"TAUARGUS_EXPECTED_ENGINE_SHA={m['engine_sha']}\n")
+              f.write(f"TAUARGUS_EXPECTED_HIGHS={m['highs_version']}\n")
+              f.write(f"TAUARGUS_EXPECTED_VERSION={m['version']}\n")
+              f.write(f"TAUARGUS_EXPECTED_TUI_VERSION={t['version']}\n")
+              f.write(f"TAUARGUS_TEST_VENV={os.environ['HOME']}/arb install/work/venv\n")
+          PY
+
+      - name: Verify native libraries resolve without build paths
+        run: |
+          set -euo pipefail
+          WORK="$HOME/arb install/work"
+          SO="$(ls "$WORK/venv/lib/python3.12/site-packages/pytauargus/"_tauargus*.so)"
+          otool -L "$SO"
+          for dep in $(otool -L "$SO" | tail -n +2 | awk '{print $1}'); do
+            case "$dep" in
+              @rpath/*|@loader_path/*|@executable_path/*|/usr/lib/*|/System/*) ;;
+              *)
+                echo "unexpected library reference in the installed module: $dep" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: Run the installed-package tests
+        run: |
+          set -euo pipefail
+          WORK="$HOME/arb install/work"
+          cd install-tests
+          "$WORK/venv/bin/python" -m pytest . -q -rs
+
+      - name: Test the uvx entry point (local wheels only)
+        run: |
+          set -euo pipefail
+          mkdir -p uvwheels
+          cp wheels-native/*.whl wheels-tui/*.whl uvwheels/
+          uvx --find-links uvwheels \
+            --from "pytauargus-tui==${TAUARGUS_EXPECTED_TUI_VERSION}" \
+            pytauargus-tui --help
+
+  install-windows:
+    name: install test windows x86_64
+    runs-on: windows-2022
+    needs: [build-windows, build-tui, test-resource]
+    env:
+      TAUARGUS_ENGINE_DIR:
+      PYTHONPATH:
+    steps:
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Download artifacts (this run)
+        uses: actions/download-artifact@v4
+        with:
+          name: pytauargus-windows-py3.12
+          path: wheels-native
+      - uses: actions/download-artifact@v4
+        with:
+          name: pytauargus-tui-wheel
+          path: wheels-tui
+      - uses: actions/download-artifact@v4
+        with:
+          name: py-install-tests
+          path: install-tests
+
+      # One shared procedure, driven through bash on the Windows runner
+      # (no PowerShell quoting pitfalls). The working path contains a
+      # space on purpose to exercise quoting and path handling.
+      - name: Fresh venv (path with a space) and install
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$USERPROFILE/arb install/work"
+          rm -rf "$WORK"
+          mkdir -p "$WORK"
+          uv venv --python 3.12 "$WORK/venv"
+          uv pip install --python "$WORK/venv/Scripts/python.exe" \
+            wheels-native/*.whl wheels-tui/*.whl
+          uv pip install --python "$WORK/venv/Scripts/python.exe" \
+            pytest pandas pyarrow
+          "$WORK/venv/Scripts/python.exe" -c "import pytauargus; print('installed ok')"
+
+      - name: Read expectations from the build manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          m = json.load(open(
+              "wheels-native/manifest-pytauargus-windows-py3.12.json"))
+          t = json.load(open("wheels-tui/manifest-pytauargus-tui-wheel.json"))
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"TAUARGUS_EXPECTED_ENGINE_SHA={m['engine_sha']}\n")
+              f.write(f"TAUARGUS_EXPECTED_HIGHS={m['highs_version']}\n")
+              f.write(f"TAUARGUS_EXPECTED_VERSION={m['version']}\n")
+              f.write(f"TAUARGUS_EXPECTED_TUI_VERSION={t['version']}\n")
+              f.write(f"TAUARGUS_TEST_VENV={os.environ['USERPROFILE']}/arb install/work/venv\n")
+          PY
+
+      - name: Run the installed-package tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$USERPROFILE/arb install/work"
+          cd install-tests
+          "$WORK/venv/Scripts/python.exe" -m pytest . -q -rs
+
+      - name: Verify the loaded DLLs come from the installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$USERPROFILE/arb install/work"
+          "$WORK/venv/Scripts/python.exe" - <<'PY'
+          import ctypes, sysconfig
+          from ctypes import wintypes
+
+          # Import first: the extension load is what pulls the bundled
+          # engine DLLs into this process.
+          import pytauargus._tauargus as native
+
+          # GetModuleFileNameExW was removed from kernel32 on newer
+          # Windows (Server 2022+), so enumerate the process modules
+          # with the ToolHelp32 snapshot API, which is current.
+          class MODULEENTRY32W(ctypes.Structure):
+              _fields_ = [
+                  ("dwSize", wintypes.DWORD),
+                  ("th32ModuleID", wintypes.DWORD),
+                  ("th32ProcessID", wintypes.DWORD),
+                  ("GlblcntUsage", wintypes.DWORD),
+                  ("ProccntUsage", wintypes.DWORD),
+                  ("modBaseAddr", ctypes.c_void_p),
+                  ("modBaseSize", wintypes.DWORD),
+                  ("hModule", wintypes.HMODULE),
+                  ("szModule", ctypes.c_wchar * 256),
+                  ("szExePath", ctypes.c_wchar * 260),
+              ]
+
+          kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+          kernel32.CreateToolhelp32Snapshot.argtypes = [
+              wintypes.DWORD, wintypes.DWORD]
+          kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+          kernel32.Module32FirstW.argtypes = [
+              wintypes.HANDLE, ctypes.POINTER(MODULEENTRY32W)]
+          kernel32.Module32FirstW.restype = wintypes.BOOL
+          kernel32.Module32NextW.argtypes = [
+              wintypes.HANDLE, ctypes.POINTER(MODULEENTRY32W)]
+          kernel32.Module32NextW.restype = wintypes.BOOL
+
+          TH32CS_SNAPMODULE = 0x00000008
+          snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0)
+          if snap in (None, 0, -1):
+              raise OSError("CreateToolhelp32Snapshot failed")
+          me = MODULEENTRY32W()
+          me.dwSize = ctypes.sizeof(MODULEENTRY32W)
+          loaded = []
+          if kernel32.Module32FirstW(snap, ctypes.byref(me)):
+              while True:
+                  loaded.append(me.szExePath.lower())
+                  nxt = MODULEENTRY32W()
+                  nxt.dwSize = ctypes.sizeof(MODULEENTRY32W)
+                  if not kernel32.Module32NextW(snap, ctypes.byref(nxt)):
+                      break
+                  me = nxt
+          kernel32.CloseHandle(snap)
+          site = sysconfig.get_paths()["purelib"].lower()
+          dlls = [l for l in loaded
+                  if l.endswith(".dll")
+                  and any(t in l for t in ("highs", "tauargus", "crp"))]
+          print("product DLLs loaded:")
+          for d in dlls:
+              print(" ", d)
+          assert dlls, "no product DLLs are loaded after import"
+          for d in dlls:
+              assert d.startswith(site), (
+                  f"product DLL loaded from outside the installation: {d}")
+          assert native.__file__.lower().startswith(site), (
+              f"native extension outside the installation: {native.__file__}")
+          print("all product DLLs load from the installation")
+          PY
+
+      - name: Test the uvx entry point (local wheels only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p uvwheels
+          cp wheels-native/*.whl wheels-tui/*.whl uvwheels/
+          uvx --find-links uvwheels \
+            --from "pytauargus-tui==${TAUARGUS_EXPECTED_TUI_VERSION}" \
+            pytauargus-tui --help
 
   release:
     name: Publish release
-    needs: [build-macos, build-linux, build-windows, build-tui]
+    needs: [build-macos, build-linux, build-windows, build-tui,
+            install-linux-x86_64, install-linux-aarch64,
+            install-macos-arm64, install-windows]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/py-v')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-
-      # PyPI versions are immutable: refuse to publish if the tag and the
-      # package versions disagree. The TUI is released in lockstep with
-      # pytauargus, so all three must agree.
-      - name: Check tag matches package versions
-        run: |
-          set -euo pipefail
-          TAG_VERSION="${GITHUB_REF_NAME#py-v}"
-          PY_VERSION="$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
-          TUI_VERSION="$(python3 -c "import tomllib;print(tomllib.load(open('tui/pyproject.toml','rb'))['project']['version'])")"
-          echo "tag=$TAG_VERSION pytauargus=$PY_VERSION tui=$TUI_VERSION"
-          [ "$TAG_VERSION" = "$PY_VERSION" ] || { echo "::error::Tag py-v$TAG_VERSION does not match pytauargus version $PY_VERSION"; exit 1; }
-          [ "$PY_VERSION" = "$TUI_VERSION" ] || { echo "::error::pytauargus ($PY_VERSION) and pytauargus-tui ($TUI_VERSION) must be released in lockstep"; exit 1; }
-
+      # No checkout: this job must publish exactly the artifacts that the
+      # install tests consumed, and a checkout (clean: true) would delete
+      # the downloaded files. All provenance comes from the build
+      # manifests.
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
+      # PyPI versions are immutable: refuse to publish if the tag and the
+      # package versions disagree. The TUI is released in lockstep with
+      # pytauargus, so all three must agree.
+      - name: Verify the build manifests and tag
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, sys
+          dist = pathlib.Path("dist")
+          manifests = sorted(dist.glob("**/manifest-*.json"))
+          if not manifests:
+              sys.exit("no build manifests found")
+          entries = [json.loads(m.read_text()) for m in manifests]
+          py_manifests = [e for e in entries if e["product"] == "pytauargus"]
+          tui_manifests = [e for e in entries if e["product"] == "pytauargus-tui"]
+          if not py_manifests or not tui_manifests:
+              sys.exit("missing pytauargus or pytauargus-tui manifests")
+          versions = {e["version"] for e in entries}
+          if len(versions) != 1:
+              sys.exit(f"version mismatch across artifacts: {versions}")
+          version = versions.pop()
+          tag = os.environ["GITHUB_REF_NAME"].removeprefix("py-v")
+          if tag != version:
+              sys.exit(f"tag py-v{tag} does not match package version {version}")
+          engine_shas = {e["engine_sha"] for e in py_manifests if e["engine_sha"]}
+          if len(engine_shas) != 1:
+              sys.exit(f"engine sha mismatch across wheels: {engine_shas}")
+          highses = {e["highs_version"] for e in py_manifests if e["highs_version"]}
+          if len(highses) != 1:
+              sys.exit(f"highs version mismatch across wheels: {highses}")
+          # Verify every listed file exists, is nonempty, and matches.
+          for e in entries:
+              for f in e["files"]:
+                  p = dist / f["name"]
+                  if not p.exists():
+                      sys.exit(f"missing release file: {p}")
+                  data = p.read_bytes()
+                  if not data:
+                      sys.exit(f"empty release file: {p}")
+                  actual = hashlib.sha256(data).hexdigest()
+                  if actual != f["sha256"]:
+                      sys.exit(f"sha256 mismatch for {p}: "
+                               f"{actual} != {f['sha256']}")
+          # Required platform coverage: every supported CPython on every
+          # target platform (the tag run always builds the full matrix).
+          def cptag(name):
+              # Wheel name: <dist>-<version>-cp<3 digits>-cp<3 digits>-<plat>.whl
+              m = re.search(r"-cp(\d{3})-cp", name)
+              return m.group(1) if m else None
+          have = {(e["platform"], cptag(e["files"][0]["name"]))
+                  for e in py_manifests}
+          required = {(plat, cp)
+                      for plat in ("manylinux_2_28_x86_64",
+                                   "manylinux_2_28_aarch64",
+                                   "macosx_arm64", "win_amd64")
+                      for cp in ("310", "311", "312", "313", "314", "315")}
+          missing = sorted(required - have)
+          if missing:
+              sys.exit(f"missing required wheels: {missing}")
+          aggregated = {
+              "version": version,
+              "product_commit": entries[0]["product_commit"],
+              "engine_sha": engine_shas.pop(),
+              "highs_version": highses.pop(),
+              "artifacts": entries,
+          }
+          (dist / "release-manifest.json").write_text(
+              json.dumps(aggregated, indent=2) + "\n")
+          print(json.dumps(aggregated, indent=2))
+          PY
+
       - name: Show wheels
         run: ls -la dist
 
-      # Downloadable wheels on the GitHub Release page.
+      # Downloadable wheels on the GitHub Release page, plus the
+      # machine-readable manifest the hashes were verified against.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.whl
+          files: |
+            dist/**/*.whl
+            dist/release-manifest.json
           generate_release_notes: true
 
       # twine uploads one project per session, so the TUI wheel (a distinct

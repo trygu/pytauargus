@@ -1,0 +1,16 @@
+    <SEPARATOR> ";"
+Sto
+    <RECODEABLE>
+    <TOTCODE> "Total"
+    <CODELIST> "sto.cdl"
+Reg
+    <RECODEABLE>
+    <TOTCODE> "Total"
+    <CODELIST> "reg.cdl"
+Var2
+    <NUMERIC>
+    <DECIMALS> 0
+FreqVar
+    <FREQUENCY>
+StatusVar
+    <STATUS>
