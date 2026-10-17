@@ -44,8 +44,8 @@ or set manually for a local run):
 Local run (after copying the curated tests into `existing/`):
 
     TAUARGUS_TEST_VENV=/path/to/venv \
-    TAUARGUS_EXPECTED_VERSION=0.5.6 \
-    TAUARGUS_EXPECTED_TUI_VERSION=0.5.6 \
+    TAUARGUS_EXPECTED_VERSION=0.5.7 \
+    TAUARGUS_EXPECTED_TUI_VERSION=0.5.7 \
     TAUARGUS_EXPECTED_ENGINE_SHA=<full sha> \
     TAUARGUS_EXPECTED_HIGHS=v1.15.1 \
     /path/to/venv/bin/python -m pytest release-tests -q -rs

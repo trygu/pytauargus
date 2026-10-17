@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pytauargus-tui"
-version = "0.5.6"
+version = "0.5.7"
 description = "Textual terminal UI for Tau-Argus — a thin view over the pytauargus engine"
 requires-python = ">=3.10"
 readme = "README.md"
@@ -17,7 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 dependencies = [
-    "pytauargus==0.5.6",
+    "pytauargus==0.5.7",
     "textual>=0.50",
 ]
 

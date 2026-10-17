@@ -744,7 +744,10 @@ jobs:
           cp wheels-native/*.whl wheels-tui/*.whl uvwheels/
           # Exact version pin: uvx can never resolve a different product
           # version from PyPI; the TUI's native dependency is exact too.
-          uvx --find-links uvwheels \
+          # Pin the interpreter to the base ABI we always build: PR runs
+          # ship cp312 wheels only, and the runner's default Python is
+          # not part of the contract (macos runners moved to 3.14).
+          uvx --python 3.12 --find-links uvwheels \
             --from "pytauargus-tui==${TAUARGUS_EXPECTED_TUI_VERSION}" \
             pytauargus-tui --help
 
@@ -826,7 +829,10 @@ jobs:
           set -euo pipefail
           mkdir -p uvwheels
           cp wheels-native/*.whl wheels-tui/*.whl uvwheels/
-          uvx --find-links uvwheels \
+          # Pin the interpreter to the base ABI we always build: PR runs
+          # ship cp312 wheels only, and the runner's default Python is
+          # not part of the contract (macos runners moved to 3.14).
+          uvx --python 3.12 --find-links uvwheels \
             --from "pytauargus-tui==${TAUARGUS_EXPECTED_TUI_VERSION}" \
             pytauargus-tui --help
 
@@ -911,7 +917,10 @@ jobs:
           set -euo pipefail
           mkdir -p uvwheels
           cp wheels-native/*.whl wheels-tui/*.whl uvwheels/
-          uvx --find-links uvwheels \
+          # Pin the interpreter to the base ABI we always build: PR runs
+          # ship cp312 wheels only, and the runner's default Python is
+          # not part of the contract (macos runners moved to 3.14).
+          uvx --python 3.12 --find-links uvwheels \
             --from "pytauargus-tui==${TAUARGUS_EXPECTED_TUI_VERSION}" \
             pytauargus-tui --help
 
@@ -1060,7 +1069,10 @@ jobs:
           set -euo pipefail
           mkdir -p uvwheels
           cp wheels-native/*.whl wheels-tui/*.whl uvwheels/
-          uvx --find-links uvwheels \
+          # Pin the interpreter to the base ABI we always build: PR runs
+          # ship cp312 wheels only, and the runner's default Python is
+          # not part of the contract (macos runners moved to 3.14).
+          uvx --python 3.12 --find-links uvwheels \
             --from "pytauargus-tui==${TAUARGUS_EXPECTED_TUI_VERSION}" \
             pytauargus-tui --help
 
