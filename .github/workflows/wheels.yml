@@ -1151,7 +1151,7 @@ jobs:
                       for plat in ("manylinux_2_28_x86_64",
                                    "manylinux_2_28_aarch64",
                                    "macosx_arm64", "win_amd64")
-                      for cp in ("310", "311", "312", "313", "314", "315")}
+                      for cp in ("311", "312", "313", "314", "315")}
           missing = sorted(required - have)
           if missing:
               sys.exit(f"missing required wheels: {missing}")
