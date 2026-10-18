@@ -52,7 +52,7 @@ jobs:
         os: [macos-14]
         # The PR report builds one CPython per platform (3.12); tag runs
         # build the full supported matrix.
-        python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]') }}
+        python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12", "3.13", "3.14", "3.15"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -185,7 +185,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ${{ github.event_name == 'pull_request' && fromJSON('["cp312-cp312"]') || fromJSON('["cp310-cp310", "cp311-cp311", "cp312-cp312", "cp313-cp313", "cp314-cp314", "cp315-cp315"]') }}
+        python: ${{ github.event_name == 'pull_request' && fromJSON('["cp312-cp312"]') || fromJSON('["cp311-cp311", "cp312-cp312", "cp313-cp313", "cp314-cp314", "cp315-cp315"]') }}
         arch: [x86_64, aarch64]
         include:
           - arch: x86_64
@@ -392,7 +392,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]') }}
+        python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12", "3.13", "3.14", "3.15"]') }}
     steps:
       - uses: actions/checkout@v4
         with:

@@ -6,7 +6,7 @@ build-backend = "scikit_build_core.build"
 name = "pytauargus"
 version = "0.5.7"
 description = "Tau-Argus: Statistical Disclosure Control, open-source solvers (HiGHS) + Python CLI"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 readme = "README.md"
 license = { text = "EUPL-1.2" }
 keywords = ["statistical disclosure control", "SDC", "tabular data", "cell suppression", "controlled rounding", "HiGHS"]
