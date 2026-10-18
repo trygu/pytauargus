@@ -46,7 +46,7 @@ Extras can be combined, for example `pip install "pytauargus[dataframe,parquet,t
 The TUI can also be installed directly with `pip install pytauargus-tui`;
 this installs `pytauargus` and its CLI too.
 
-Wheels are available for Python 3.10–3.15 on macOS arm64, Linux x86_64 and
+Wheels are available for Python 3.11–3.15 on macOS arm64, Linux x86_64 and
 aarch64 (glibc 2.28+), and Windows x64. For other platforms, see
 [building from source](https://github.com/trygu/pytauargus/blob/master/docs/development.md#building-from-source).
 To pin a release, install `pytauargus==<version>`;
