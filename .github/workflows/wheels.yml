@@ -1090,10 +1090,12 @@ jobs:
       # No checkout: this job must publish exactly the artifacts that the
       # install tests consumed, and a checkout (clean: true) would delete
       # the downloaded files. All provenance comes from the build
-      # manifests.
+      # manifests. Only the wheel artifacts: the install-test artifact
+      # holds fixture files that must never be published.
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: pytauargus-*
           merge-multiple: true
 
       # PyPI versions are immutable: refuse to publish if the tag and the
@@ -1167,8 +1169,16 @@ jobs:
           print(json.dumps(aggregated, indent=2))
           PY
 
-      - name: Show wheels
-        run: ls -la dist
+      # twine uploads everything in its packages dir, so the wheels are
+      # separated from the manifests before publication: one directory per
+      # PyPI project (twine uploads one project per session).
+      - name: Separate wheels for publishing
+        run: |
+          set -euo pipefail
+          mkdir -p dist-py dist-tui
+          mv dist/pytauargus-*.whl dist-py/
+          mv dist/pytauargus_tui-*.whl dist-tui/
+          ls -la dist dist-py dist-tui
 
       # Downloadable wheels on the GitHub Release page, plus the
       # machine-readable manifest the hashes were verified against.
@@ -1176,23 +1186,17 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/**/*.whl
+            dist-py/*.whl
+            dist-tui/*.whl
             dist/release-manifest.json
           generate_release_notes: true
-
-      # twine uploads one project per session, so the TUI wheel (a distinct
-      # PyPI project) is separated from the pytauargus wheels first.
-      - name: Separate TUI wheel
-        run: |
-          set -euo pipefail
-          mkdir -p dist-tui
-          mv dist/pytauargus_tui-*.whl dist-tui/
-          ls -la dist dist-tui
 
       # Optional PyPI publish (trusted publishing or token).
       - name: Publish pytauargus to PyPI
         if: ${{ vars.PYPI_ENABLED == 'true' }}
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-py
 
       - name: Publish pytauargus-tui to PyPI
         if: ${{ vars.PYPI_ENABLED == 'true' }}
