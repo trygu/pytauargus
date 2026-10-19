@@ -7,11 +7,11 @@ Installing it also gives you the `tauargus` CLI.
 
 ## Screenshots
 
-![Loaded table, every cell coloured by its safety status](https://raw.githubusercontent.com/trygu/tauargus-engine/master/docs/tui-images/02-table0-unsafe.png)
+![Loaded table, every cell coloured by its safety status](https://raw.githubusercontent.com/trygu/pytauargus/master/docs/tui-images/02-table0-unsafe.png)
 
-![Suppression preview, inspect the throwaway result before accepting](https://raw.githubusercontent.com/trygu/tauargus-engine/master/docs/tui-images/04-preview.png)
+![Suppression preview, inspect the throwaway result before accepting](https://raw.githubusercontent.com/trygu/pytauargus/master/docs/tui-images/04-preview.png)
 
-![Accepted; the preview becomes the working session](https://raw.githubusercontent.com/trygu/tauargus-engine/master/docs/tui-images/05-accepted.png)
+![Accepted; the preview becomes the working session](https://raw.githubusercontent.com/trygu/pytauargus/master/docs/tui-images/05-accepted.png)
 
 ## What it does
 
