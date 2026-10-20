@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "pytauargus"
-version = "0.5.7"
+version = "0.6.0"
 description = "Tau-Argus: Statistical Disclosure Control, open-source solvers (HiGHS) + Python CLI"
 requires-python = ">=3.11"
 readme = "README.md"
