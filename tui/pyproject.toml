@@ -4,9 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pytauargus-tui"
-version = "0.6.0"
+version = "0.6.1"
 description = "Textual terminal UI for Tau-Argus — a thin view over the pytauargus engine"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 readme = "README.md"
 license = { text = "EUPL-1.2" }
 keywords = ["statistical disclosure control", "SDC", "TUI", "textual", "terminal"]
@@ -17,7 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 dependencies = [
-    "pytauargus==0.6.0",
+    "pytauargus==0.6.1",
     "textual>=0.50",
 ]
 

@@ -7,6 +7,7 @@ work before any preview exists; a changed input is detected, not silently
 treated as current.
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,11 @@ import pytest
 from pytauargus_tui.model import CellInstruction, SuppressionOp
 from pytauargus_tui import workspace as ws
 
-DATA = Path(__file__).resolve().parent.parent.parent.parent / "data"
+DATA = (
+    Path(os.environ.get("TAUARGUS_ENGINE_DIR",
+                        str(Path(__file__).resolve().parents[3] / "tauargus-engine")))
+    / "data"
+)
 ARB = DATA / "TestRecode.arb"
 
 

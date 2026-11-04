@@ -7,6 +7,7 @@ grid shape, cell detail, table switching, and the action keys.
 import json
 import shutil
 import time
+import os
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,11 @@ from pytauargus_tui.app import (
     _HelpScreen,
 )
 
-DATA = Path(__file__).resolve().parent.parent.parent.parent / "data"
+DATA = (
+    Path(os.environ.get("TAUARGUS_ENGINE_DIR",
+                        str(Path(__file__).resolve().parents[3] / "tauargus-engine")))
+    / "data"
+)
 ARB = DATA / "TestRecode.arb"
 
 

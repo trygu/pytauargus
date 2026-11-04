@@ -7,6 +7,7 @@ Python so the textual widgets never touch the native bindings directly.
 """
 
 import shutil
+import os
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,11 @@ from pytauargus_tui.model import (
     replay_batch,
 )
 
-DATA = Path(__file__).resolve().parent.parent.parent.parent / "data"
+DATA = (
+    Path(os.environ.get("TAUARGUS_ENGINE_DIR",
+                        str(Path(__file__).resolve().parents[3] / "tauargus-engine")))
+    / "data"
+)
 ARB = DATA / "TestRecode.arb"
 
 
