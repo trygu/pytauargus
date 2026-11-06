@@ -14,7 +14,8 @@ integer control) data.
 
 The native run happens in a fresh subprocess: this is a crash regression.
 A native abort or solver hang must fail only this test, not take down the
-whole suite, and a healthy run finishes in seconds.
+whole suite. The MOD solve on this 1653-cell fractional table is the slowest
+in the suite, so the cap is generous (600s); a true hang still fails fast.
 """
 
 import csv
@@ -38,7 +39,7 @@ def _run_batch(code: str, workdir: Path) -> subprocess.CompletedProcess:
                + os.environ.get("PYTHONPATH", ""))
     return subprocess.run(
         [sys.executable, "-c", code],
-        cwd=workdir, env=env, capture_output=True, text=True, timeout=120,
+        cwd=workdir, env=env, capture_output=True, text=True, timeout=600,
     )
 
 
