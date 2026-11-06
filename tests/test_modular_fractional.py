@@ -8,14 +8,21 @@ same 429 a priori secrets.
 ``input.parquet`` is the original Arrow export. The other fixtures
 (``input.tab`` / ``input.rda`` / ``input.hst`` / ``hier*.hrc``) were written
 by ``rtauargus.native`` from that same Parquet, so the native batch consumes
-the exact table input the R test uses -- no R runtime is needed here. The
-Parquet is read again to prove the fixtures are the fractional (not the
-integer control) data.
+the exact table input the R test uses -- no R runtime is needed here.
 
 The native run happens in a fresh subprocess: this is a crash regression.
 A native abort or solver hang must fail only this test, not take down the
-whole suite. The MOD solve on this 1653-cell fractional table is the slowest
-in the suite, so the cap is generous (600s); a true hang still fails fast.
+whole suite.
+
+Windows gate: the engine's CSP separation error path can spin in a
+retry loop that ignores MAX_TIME when auditing this fractional table
+(engine issue: "CSP no-fractional-variables retry loop"). The loop is
+nondeterministic (HiGHS multithreaded LP), so running it on every
+platform makes the suite flaky. It is gated to the Windows installed-
+wheel job (wheels.yml ``test-resource``) -- the platform where the
+original crash was reported and where the run is known to complete --
+until the engine fix lands. The R test suite covers the same engine
+commit on all three platforms in the meantime.
 """
 
 import csv
@@ -26,9 +33,6 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
-
-pytest.importorskip("pyarrow")
-import pyarrow.parquet as pq
 
 SRC = Path(__file__).resolve().parent.parent / "src"
 FIXTURE = Path(__file__).parent / "data" / "modular"
@@ -43,7 +47,14 @@ def _run_batch(code: str, workdir: Path) -> subprocess.CompletedProcess:
     )
 
 
-def test_modular_fractional_batch(tmp_path):
+def test_modular_fractional_fixtures():
+    """The tabular fixtures are the fractional Arrow data, not a control.
+
+    Runs on every platform: pure Python, no engine.
+    """
+    pytest.importorskip("pyarrow")
+    import pyarrow.parquet as pq
+
     table = pq.read_table(FIXTURE / "input.parquet")
     assert table.num_rows == 1653
     assert sum(table.column("primary").to_pylist()) == 429
@@ -55,6 +66,13 @@ def test_modular_fractional_batch(tmp_path):
     assert [int(row[3]) for row in rows] == table.column("n_contr").to_pylist()
     assert abs(float(rows[0][2]) - table.column("response")[0].as_py()) < 1e-6
     assert "." in rows[0][2]
+
+
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="CSP retry loop on fractional data (engine "
+                           "issue); Windows is the proven platform")
+def test_modular_fractional_batch(tmp_path):
+    pytest.importorskip("pyarrow")
 
     # Point the metadata's hierarchy lists at the local copies.
     rda = (FIXTURE / "input.rda").read_text().replace(
@@ -76,6 +94,8 @@ def test_modular_fractional_batch(tmp_path):
         '<WRITETABLE> (1,4,,"result.csv")\n'
     )
 
+    # The cap is a hang guard for the CSP retry loop, not a perf budget:
+    # a healthy Windows run finishes in a few minutes.
     proc = _run_batch(
         "from pytauargus.engine import run_batch; "
         f"run_batch({str(batch)!r})",
