@@ -14,15 +14,10 @@ The native run happens in a fresh subprocess: this is a crash regression.
 A native abort or solver hang must fail only this test, not take down the
 whole suite.
 
-Windows gate: the engine's CSP separation error path can spin in a
-retry loop that ignores MAX_TIME when auditing this fractional table
-(engine issue: "CSP no-fractional-variables retry loop"). The loop is
-nondeterministic (HiGHS multithreaded LP), so running it on every
-platform makes the suite flaky. It is gated to the Windows installed-
-wheel job (wheels.yml ``test-resource``) -- the platform where the
-original crash was reported and where the run is known to complete --
-until the engine fix lands. The R test suite covers the same engine
-commit on all three platforms in the meantime.
+The engine's CSP exit-propagation fix (the separation error path that
+could spin in a MAX_TIME-ignoring retry loop on this fractional table)
+landed in the pinned engine, so the native run completes and is bounded
+on every platform and the test runs ungated.
 """
 
 import csv
@@ -68,9 +63,6 @@ def test_modular_fractional_fixtures():
     assert "." in rows[0][2]
 
 
-@pytest.mark.skipif(sys.platform != "win32",
-                    reason="CSP retry loop on fractional data (engine "
-                           "issue); Windows is the proven platform")
 def test_modular_fractional_batch(tmp_path):
     pytest.importorskip("pyarrow")
 
