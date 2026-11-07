@@ -644,9 +644,15 @@ jobs:
           mkdir -p dist-install-tests/existing
           for f in test_meta test_audit test_result test_arb test_rda \
                    test_micro test_util test_hrc test_dataframe \
-                   test_specify_table_cost_defaults; do
+                   test_specify_table_cost_defaults \
+                   test_modular_fractional; do
             cp "tests/${f}.py" dist-install-tests/existing/
           done
+          # Fixtures for the modular fractional regression (its native
+          # part runs on the Windows job; the fixture check runs
+          # everywhere).
+          mkdir -p dist-install-tests/existing/data
+          cp -r tests/data/modular dist-install-tests/existing/data/
           find dist-install-tests -type f | sort
 
       - name: Upload test resource
