@@ -1,0 +1,21 @@
+   <SEPARATOR> ","
+   <SAFE> "s"
+   <UNSAFE> "u"
+   <PROTECT> "p"
+var1
+  <RECODEABLE>
+  <TOTCODE> "T"
+  <HIERARCHICAL>
+  <HIERCODELIST> "hier1.hrc"
+  <HIERLEADSTRING> "@"
+var2
+  <RECODEABLE>
+  <TOTCODE> "T"
+  <HIERARCHICAL>
+  <HIERCODELIST> "hier2.hrc"
+  <HIERLEADSTRING> "@"
+response
+  <NUMERIC>
+  <DECIMALS> 7
+n_contr
+  <FREQUENCY>

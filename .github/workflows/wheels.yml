@@ -46,10 +46,15 @@ jobs:
   build-macos:
     name: Build wheel — macOS arm64 · Python ${{ matrix.python }}
     runs-on: ${{ matrix.os }}
+    env:
+      # The macos-15 runner defaults to a 15.0 deployment target; pin the
+      # 14.0 floor of the previous release so the wheel tag stays
+      # macosx_14_0_arm64.
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14]
+        os: [macos-15]
         # The PR report builds one CPython per platform (3.12); tag runs
         # build the full supported matrix.
         python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12", "3.13", "3.14", "3.15"]') }}
@@ -644,9 +649,15 @@ jobs:
           mkdir -p dist-install-tests/existing
           for f in test_meta test_audit test_result test_arb test_rda \
                    test_micro test_util test_hrc test_dataframe \
-                   test_specify_table_cost_defaults; do
+                   test_specify_table_cost_defaults \
+                   test_modular_fractional; do
             cp "tests/${f}.py" dist-install-tests/existing/
           done
+          # Fixtures for the modular fractional regression (its native
+          # part runs on the Windows job; the fixture check runs
+          # everywhere).
+          mkdir -p dist-install-tests/existing/data
+          cp -r tests/data/modular dist-install-tests/existing/data/
           find dist-install-tests -type f | sort
 
       - name: Upload test resource
@@ -838,7 +849,7 @@ jobs:
 
   install-macos-arm64:
     name: Test installed package — macOS arm64
-    runs-on: macos-14
+    runs-on: macos-15
     needs: [build-macos, build-tui, test-resource]
     env:
       TAUARGUS_ENGINE_DIR:
