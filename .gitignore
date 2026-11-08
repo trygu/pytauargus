@@ -27,3 +27,6 @@ CSPlogfile.txt
 # the test-resource CI job (or locally for a manual run); they are not
 # committed copies.
 release-tests/existing/
+
+# local code-intelligence index (regenerable)
+.gitnexus/
