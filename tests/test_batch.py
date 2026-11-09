@@ -263,3 +263,54 @@ class TestAprioryGrammar:
         assert cmd.separator == ";"
         assert cmd.ignore_error is True  # parser default
         assert cmd.expand_bogus is False
+
+
+class TestNumericTokens:
+    """A malformed numeric batch parameter is a BatchError with
+    context, never a raw ValueError and never a silent default: a
+    garbage value must not reach the solver (legacy failed the
+    batch; as.integer/as.numeric would coerce it to NA with a
+    warning the operator can easily miss)."""
+
+    @staticmethod
+    def _parse(tmp_path, line):
+        # A suppress/writetable line needs the standard preamble so the
+        # parser reaches the numeric argument instead of rejecting the
+        # command's position first.
+        pre = [
+            '<OPENMICRODATA> "d.asc"',
+            '<OPENMETADATA> "d.rda"',
+            '<SPECIFYTABLE> "A"|"R"|',
+            "<SAFETYRULE> NK(2,50)",
+            "<READMICRODATA>",
+        ]
+        arb = tmp_path / "a.arb"
+        arb.write_text("\n".join(pre + [line]) + "\n")
+        return parse_batch(arb)
+
+    @pytest.mark.parametrize("line,what", [
+        ('<SUPPRESS> RND(1, abc)', "RND base"),
+        ('<SUPPRESS> RND(1, 10, abc)', "RND steps"),
+        ('<SUPPRESS> RND(1, 10, 5, abc)', "RND max time"),
+        ('<SUPPRESS> MOD(1, abc)', "MOD max time"),
+        ('<SUPPRESS> MOD(1, 60, 1, 0, 1, abc)', "MOD MSC"),
+        ('<SUPPRESS> OPT(1, abc)', "OPT max time"),
+        ('<SUPPRESS> CKM(1) "x|y|abc"', "CKM mu_c"),
+        ('<WRITETABLE> (1, xyz, "")', "WRITETABLE output type"),
+    ])
+    def test_bad_numeric_token_raises_batch_error(self, tmp_path, line, what):
+        with pytest.raises(BatchError, match="Invalid number") as exc:
+            self._parse(tmp_path, line)
+        assert what in str(exc.value)
+
+    def test_empty_value_after_comma_is_invalid(self, tmp_path):
+        # A comma promises a value; an empty one is malformed (the
+        # legacy Java parser failed the batch the same way).
+        with pytest.raises(BatchError, match="Invalid number"):
+            self._parse(tmp_path, '<SUPPRESS> MOD(1, )')
+
+    def test_absent_optional_numeric_keeps_default(self, tmp_path):
+        # No comma at all: the optional parameter is absent and the
+        # default (0) is kept.
+        cmds = self._parse(tmp_path, '<SUPPRESS> MOD(1)')
+        assert cmds[-1].mod_max_time == 0

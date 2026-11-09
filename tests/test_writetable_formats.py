@@ -26,6 +26,8 @@ Types 6 (JJ) and 7 (CKM) had no native equivalent of the legacy
 writers and are not implemented.
 """
 
+import pytest
+
 from pytauargus.batch import WriteTable
 from pytauargus.engine import (
     IDENTITY_DIM_SEQUENCE,
@@ -162,3 +164,40 @@ def test_jj_and_ckm_not_implemented(tmp_path):
             assert "not implemented" in str(exc)
         else:
             raise AssertionError(f"type {output_type} must not be written")
+
+
+def test_write_csv_open_failure_raises(tmp_path):
+    """A WRITETABLE CSV to an unopenable path must raise, not log a
+    write that never happened. The native writer returns False when
+    fopen fails; the legacy TauArgus.exe reported it, so must the
+    headless driver."""
+    eng = _engine()
+    out = tmp_path / "no_such_dir" / "out.csv"
+    with pytest.raises(BatchError, match="Cannot open"):
+        eng.write_table(WriteTable(tab_no=1, output_type=1, file=str(out)))
+    assert not out.exists()
+
+
+def test_write_cell_records_open_failure_raises(tmp_path):
+    """Types 2/3/4 go through WriteCellRecords; same contract as the
+    CSV writer."""
+    eng = _engine()
+    out = tmp_path / "no_such_dir" / "sbs.tab"
+    with pytest.raises(BatchError, match="Cannot open"):
+        eng.write_table(WriteTable(tab_no=1, output_type=4, file=str(out)))
+    assert not out.exists()
+
+
+def test_ckm_missing_ptable_raises(tmp_path):
+    """CKM with an unreadable p-table must raise (the native call
+    returns -9), and the table must not be marked CKM-protected.
+    Before the check, the failure was a silent no-op that still
+    registered the table, which then rejected the normal output
+    types."""
+    from pytauargus.batch import Suppress
+    eng = _engine()
+    cmd = Suppress(kind="CKM", tab_no=1,
+                   ckm_p_table=str(tmp_path / "no_such.ptable"))
+    with pytest.raises(BatchError, match="SetCellKeyValuesFreq"):
+        eng._suppress_ckm(0, cmd)
+    assert 0 not in eng._ckm_tables

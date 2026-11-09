@@ -156,7 +156,9 @@ class _EngineLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             msg = self.format(record)
-            self._app.call_from_thread(self._app.push_log, msg)
+            # Warnings and above stand out like errors; info stays plain.
+            self._app.call_from_thread(self._app.push_log, msg,
+                                       record.levelno >= logging.WARNING)
         except Exception:
             pass
 
@@ -314,6 +316,7 @@ class TauArgusApp(App):
     #logline { height: 1; layout: horizontal; align-vertical: middle; }
     #logline #spin { width: 1; margin-right: 1; }
     #logtext { width: 1fr; }
+    #logtext.error { color: $error; text-style: bold; }
     """
 
     BINDINGS = [
@@ -353,6 +356,7 @@ class TauArgusApp(App):
         self._grid: Optional[TableGrid] = None
         self._detail = ""
         self._log = "ready"
+        self._log_error = False
         self._log_handler: Optional[_EngineLogHandler] = None
         # Staged preview state (design §B.3): _pending is the staged op,
         # _preview the throwaway session it produced, _confirmed the ops
@@ -668,7 +672,8 @@ class TauArgusApp(App):
                 self._preview_revision = None
                 self._set_detail(self._table_detail(
                     self._session.table(self._tab)))
-            self._set_log(f"error: {w.error}")
+            self._set_log(f"error: {type(w.error).__name__}: {w.error}",
+                          is_error=True)
         if w.state in (WorkerState.SUCCESS, WorkerState.ERROR,
                        WorkerState.CANCELLED):
             self._set_busy(False)
@@ -908,7 +913,7 @@ class TauArgusApp(App):
             path = _ws.save_workspace(m, self._workspace_path())
             self._set_log(f"workspace saved: {path.name}")
         except OSError as e:
-            self._set_log(f"workspace save failed: {e}")
+            self._set_log(f"workspace save failed: {e}", is_error=True)
 
     def action_replay(self) -> None:
         """Write the accepted recipe as a replayable headless batch next to
@@ -928,7 +933,7 @@ class TauArgusApp(App):
                     if self._pending_instr else "")
             self._set_log(f"replay batch written: {path.name}{note}")
         except OSError as e:
-            self._set_log(f"replay write failed: {e}")
+            self._set_log(f"replay write failed: {e}", is_error=True)
 
     def action_help(self) -> None:
         """Show the on-screen explanation of keys, colours and workflow."""
@@ -1106,8 +1111,9 @@ class TauArgusApp(App):
         self._detail = text
         self.query_one("#detail", Static).update(text)
 
-    def _set_log(self, text: str) -> None:
+    def _set_log(self, text: str, is_error: bool = False) -> None:
         self._log = text
+        self._log_error = is_error
         self._refresh_status()
 
     def _refresh_status(self) -> None:
@@ -1156,12 +1162,16 @@ class TauArgusApp(App):
             line = f"{state}{sep}{hint}"
         self._status_line = line[:width]
         try:
-            self.query_one("#logtext", Static).update(self._status_line)
+            widget = self.query_one("#logtext", Static)
+            widget.update(self._status_line)
+            # Errors stand out in the status line (bold, $error colour)
+            # until the next message replaces them.
+            widget.set_class(self._log_error, "error")
         except Exception:
             pass  # widget not composed yet
 
-    def push_log(self, msg: str) -> None:
-        self._set_log(msg)
+    def push_log(self, msg: str, is_error: bool = False) -> None:
+        self._set_log(msg, is_error=is_error)
 
     def _set_busy(self, busy: bool) -> None:
         """Track engine-worker activity; the spinner mirrors the flag."""

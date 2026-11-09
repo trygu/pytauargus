@@ -1364,6 +1364,8 @@ class Engine:
             if ok > 0:
                 raise BatchError(f"AHiTaS failed: {self._hitas.error_string(ok)}")
             ok2, n = self._tau.set_secondary_hitas(tab)
+            if not ok2:
+                raise BatchError(f"SetSecondaryHITAS failed for table {tab + 1}")
             logger.info("MOD suppress: %d cells set secondary.", n)
 
     def _suppress_opt(self, tab: int, cmd: Suppress) -> None:
@@ -1388,6 +1390,9 @@ class Engine:
                 for line in fin:
                     fout.write(line.rstrip("\n") + " m\n")
             code, n = self._tau.set_secondary_jjformat(tab, jj2, False)
+            if code != 1:
+                raise BatchError(
+                    f"SetSecondaryJJFormat failed (code {code})")
             logger.info("OPT suppress: %d cells set secondary.", n)
 
     def _correct_round_jj(self, path: str, base: int, no_partitions: bool,
@@ -1455,7 +1460,9 @@ class Engine:
             )
             if result > 0:
                 raise BatchError(f"DoRound failed (result {result}, err {err})")
-            self._tau.set_rounded_response(jj_out, tab)
+            if not self._tau.set_rounded_response(jj_out, tab):
+                raise BatchError(
+                    f"SetRoundedResponse failed for table {tab + 1}")
             self._rounded_tables.add(tab)
             logger.info("RND suppress: table %d rounded (max_jump=%.4f, %d steps).",
                         tab + 1, max_jump, n_jump)
@@ -1463,18 +1470,24 @@ class Engine:
     def _suppress_ckm(self, tab: int, cmd: Suppress) -> None:
         if cmd.ckm_p_table:
             ok, mn, mx = self._tau.set_cell_key_values_freq(tab, cmd.ckm_p_table)
+            if ok != 1:
+                raise BatchError(f"SetCellKeyValuesFreq failed (code {ok}) "
+                                 f"for {cmd.ckm_p_table}")
             logger.info("CKM freq: min=%d max=%d", mn, mx)
         elif cmd.ckm_p_table_cont:
             if not self._metadata:
                 raise BatchError("No metadata for CKM.")
             resp = self._metadata.variables[0]  # simplified
-            self._tau.set_cell_key_values_cont(
+            rc = self._tau.set_cell_key_values_cont(
                 tab, cmd.ckm_p_table_cont, cmd.ckm_p_table_sep,
                 resp.ckm_type, resp.ckm_top_k, resp.ckm_zeros, resp.ckm_parity,
                 resp.ckm_separation, 0.0, resp.ckm_scaling,
                 resp.ckm_sigma0, resp.ckm_sigma1, resp.ckm_xstar, resp.ckm_q,
                 resp.ckm_epsilon, cmd.ckm_mu_c,
             )
+            if rc != 1:
+                raise BatchError(f"SetCellKeyValuesCont failed (code {rc}) "
+                                 f"for {cmd.ckm_p_table_cont}")
             logger.info("CKM cont: table %d processed.", tab + 1)
         self._ckm_tables.add(tab)
 
@@ -1819,8 +1832,9 @@ class Engine:
                 f"implemented; the legacy writer had no native "
                 f"equivalent")
         if cmd.output_type == 1:  # CSV
-            self._tau.write_csv(tab, str(fpath), embed, IDENTITY_DIM_SEQUENCE,
-                                resp)
+            if not self._tau.write_csv(tab, str(fpath), embed,
+                                       IDENTITY_DIM_SEQUENCE, resp):
+                raise BatchError(f"Cannot open {fpath} for writing")
         elif cmd.output_type == 5:  # INTERMEDIATE (audit table)
             opts = set(cmd.options)
             simple = "+SO" in opts
@@ -1842,12 +1856,15 @@ class Engine:
                                     cmd.output_type == 2)
             first = self._wt_first_line(tab, resp, add_status, embed) \
                 if varnames else ""
-            self._tau.write_cell_records(tab, str(fpath), False, False,
-                                         suppress_empty, first, add_status,
-                                         embed, resp)
+            if not self._tau.write_cell_records(tab, str(fpath), False,
+                                                False, suppress_empty, first,
+                                                add_status, embed, resp):
+                raise BatchError(f"Cannot open {fpath} for writing")
         elif cmd.output_type == 4:  # SBS
-            self._tau.write_cell_records(tab, str(fpath), True, sbs_hier,
-                                         True, "", True, embed, resp)
+            if not self._tau.write_cell_records(tab, str(fpath), True,
+                                                sbs_hier, True, "", True,
+                                                embed, resp):
+                raise BatchError(f"Cannot open {fpath} for writing")
         else:
             raise BatchError(f"Unknown output type {cmd.output_type}")
         logger.info("Wrote table %d to %s", tab + 1, fpath)

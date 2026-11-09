@@ -240,6 +240,15 @@ async def test_second_opt_preview_surfaces_5008(app):
         await wait_for(pilot, lambda: "5008" in app.log_text, what="5008 error")
         assert app.preview is None and app.pending is None
         assert app.busy is False
+        # The error carries the exception class and is styled as an
+        # error in the status line (not a plain log message).
+        assert "BatchError" in app.log_text
+        logtext = app.query_one("#logtext", Static)
+        assert "error" in logtext.classes
+        # The next ordinary log clears the error styling.
+        await pilot.press("ctrl+z")
+        await wait_for(pilot, lambda: app.log_text == "nothing to undo")
+        assert "error" not in app.query_one("#logtext", Static).classes
 
 
 async def test_save_action_writes_tab(app, tmp_path):
