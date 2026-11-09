@@ -164,6 +164,24 @@ def _unquote(s: str) -> str:
     return s
 
 
+def _parse_int(value: str, what: str) -> int:
+    """Parse a numeric batch token as an int. A malformed token raises a
+    ``BatchError`` that names the field, so a bad value fails the batch
+    loudly instead of surfacing as a raw ``ValueError`` traceback."""
+    try:
+        return int(value)
+    except ValueError:
+        raise BatchError(f"Invalid number '{value}' for {what}")
+
+
+def _parse_float(value: str, what: str) -> float:
+    """Parse a numeric batch token as a float (see ``_parse_int``)."""
+    try:
+        return float(value)
+    except ValueError:
+        raise BatchError(f"Invalid number '{value}' for {what}")
+
+
 # ===========================================================================
 # Command dataclasses
 # ===========================================================================
@@ -332,7 +350,7 @@ def _parse_specify_table(tok: Tokenizer) -> SpecifyTable:
             cost = tok.next_field(",")
         rest = tok.get_line()
         if rest != "":
-            lam = float(rest)
+            lam = _parse_float(rest, "SPECIFYTABLE lambda")
 
     return SpecifyTable(exp_vars=exp_vars, resp_var=resp,
                         shadow_var=shadow, cost_var=cost, lam=lam)
@@ -384,16 +402,17 @@ def _parse_suppress(tok: Tokenizer) -> Suppress:
     tok.clear_line()
 
     token = _tail_next_token(tail)
-    tab_no = int(token)
+    tab_no = _parse_int(token, "SUPPRESS table number")
     cmd = Suppress(kind=kind, tab_no=tab_no)
 
     if kind == "GH":
         c = _tail_next_char(tail)
         if c == ",":
-            cmd.gh_apriory_pct = int(_tail_next_token(tail))
+            cmd.gh_apriory_pct = _parse_int(_tail_next_token(tail),
+                                             "GH apriory pct")
             c = _tail_next_char(tail)
         if c == ",":
-            cmd.gh_size = int(_tail_next_token(tail))
+            cmd.gh_size = _parse_int(_tail_next_token(tail), "GH size")
             c = _tail_next_char(tail)
         if c == ",":
             cmd.gh_singleton = _tail_next_token(tail) == "1"
@@ -401,7 +420,8 @@ def _parse_suppress(tok: Tokenizer) -> Suppress:
     elif kind == "MOD":
         c = _tail_next_char(tail)
         if c == ",":
-            cmd.mod_max_time = int(_tail_next_token(tail))
+            cmd.mod_max_time = _parse_int(_tail_next_token(tail),
+                                           "MOD max time")
             c = _tail_next_char(tail)
         i = 0
         while c == "," and i < 3:
@@ -417,38 +437,41 @@ def _parse_suppress(tok: Tokenizer) -> Suppress:
         if c == ",":  # MSC, LOWERMARG, UPPERMARG
             msc = _tail_next_token(tail)
             if msc != "":
-                cmd.mod_msc = float(msc)
+                cmd.mod_msc = _parse_float(msc, "MOD MSC")
             c = _tail_next_char(tail)
             if c == ",":
                 lm = _tail_next_token(tail)
                 if lm != "":
-                    cmd.mod_lower_marg = float(lm)
+                    cmd.mod_lower_marg = _parse_float(lm, "MOD LOWERMARG")
                 c = _tail_next_char(tail)
             if c == ",":
                 um = _tail_next_token(tail)
                 if um != "":
-                    cmd.mod_upper_marg = float(um)
+                    cmd.mod_upper_marg = _parse_float(um, "MOD UPPERMARG")
     elif kind == "OPT":
         c = _tail_next_char(tail)
         if c == ",":
-            cmd.opt_max_time = int(_tail_next_token(tail))
+            cmd.opt_max_time = _parse_int(_tail_next_token(tail),
+                                           "OPT max time")
     elif kind == "RND":
         c = _tail_next_char(tail)
         if c != ",":
             raise BatchError("a comma(,) expected after RND base")
-        cmd.rnd_base = int(_tail_next_token(tail))
+        cmd.rnd_base = _parse_int(_tail_next_token(tail), "RND base")
         c = _tail_next_char(tail)
         if c == ",":  # steps
-            cmd.rnd_step = int(_tail_next_token(tail))
+            cmd.rnd_step = _parse_int(_tail_next_token(tail), "RND steps")
             c = _tail_next_char(tail)
         if c == ",":  # max time
-            cmd.rnd_time = int(_tail_next_token(tail))
+            cmd.rnd_time = _parse_int(_tail_next_token(tail), "RND max time")
             c = _tail_next_char(tail)
         if c == ",":  # partitions
-            cmd.rnd_partitions = int(_tail_next_token(tail))
+            cmd.rnd_partitions = _parse_int(_tail_next_token(tail),
+                                            "RND partitions")
             c = _tail_next_char(tail)
         if c == ",":  # stop rule
-            cmd.rnd_stop_rule = int(_tail_next_token(tail))
+            cmd.rnd_stop_rule = _parse_int(_tail_next_token(tail),
+                                           "RND stop rule")
             c = _tail_next_char(tail)
         if c == ",":  # unit cost
             cmd.rnd_unit_cost = _tail_next_token(tail) == "1"
@@ -468,7 +491,7 @@ def _parse_suppress(tok: Tokenizer) -> Suppress:
             if len(parts) > 1 and parts[1].strip() and not parts[1].strip().startswith("//"):
                 cmd.ckm_p_table_sep = _unquote(parts[1].strip())
             if len(parts) > 2 and parts[2].strip():
-                cmd.ckm_mu_c = float(parts[2].strip())
+                cmd.ckm_mu_c = _parse_float(parts[2].strip(), "CKM mu_c")
         else:
             hs = _unquote(rem)
             if not hs.startswith("//"):
@@ -484,11 +507,11 @@ def _parse_write_table(tok: Tokenizer) -> WriteTable:
     c = _tail_next_char(tail)
     if c != "(":
         raise BatchError(f"( expected; not a {c}")
-    tab_no = int(_tail_next_token(tail))
+    tab_no = _parse_int(_tail_next_token(tail), "WRITETABLE table number")
     c = _tail_next_char(tail)
     if c != ",":
         raise BatchError(f", expected; not a {c}")
-    output_type = int(_tail_next_token(tail))
+    output_type = _parse_int(_tail_next_token(tail), "WRITETABLE output type")
     if not (1 <= output_type <= 7):
         raise BatchError(f"Unknown output type ({output_type})")
     c = _tail_next_char(tail)
@@ -521,7 +544,7 @@ def _parse_recode(tok: Tokenizer) -> Recode:
     tail = [tok.get_line()]
     tok.clear_line()
     token = _tail_next_token(tail)
-    tab_no = int(token)
+    tab_no = _parse_int(token, "RECODE table number")
     c = _tail_next_char(tail)
     if c != ",":
         raise BatchError(f"Illegal character {c} found. Comma expected")
@@ -539,7 +562,7 @@ def _parse_apriory(tok: Tokenizer) -> Apriory:
     if c != ",":
         raise BatchError("a , was expected here")
     hs = tok.next_field(",")
-    tab_no = int(hs)
+    tab_no = _parse_int(hs, "APRIORI table number")
     if not tok.test_next_char() == '"':
         raise BatchError("A quote was expected here before the separator")
     tok.next_char()  # consume opening quote
