@@ -5,7 +5,7 @@ code cell runs against the verified public API; the markdown explains the
 surface it exercises.
 
 1. [`01_quickstart.ipynb`](01_quickstart.ipynb): DataFrame → `protect()` → `TableResult` → masked CSV/Parquet; existing batches and native cell inspection
-2. [`02_protection_and_audit.ipynb`](02_protection_and_audit.ipynb): OPT/MOD DataFrame protection, explicit audit and masked export; batch OPT/MOD/RND
+2. [`02_protection_and_audit.ipynb`](02_protection_and_audit.ipynb): OPT/MOD DataFrame protection, explicit audit and masked export; batch OPT/MOD/RND; typed engine errors (`TauArgusNativeError`, 0.7.0)
 3. [`03_generators.ipynb`](03_generators.ipynb): `protect(run=False)` file preview, multiple tables, custom writers and batch round-trip
 
 All three use twelve synthetic respondents to demonstrate the new DataFrame
@@ -26,11 +26,14 @@ uv sync --extra notebooks
 uv run --with jupyterlab jupyter lab notebooks/
 
 # headless: execute every notebook and re-save its outputs
-uv run python notebooks/_run.py
+uv run --with nbclient --with nbformat --with ipykernel python notebooks/_run.py
 ```
 
-The notebooks locate the repo `data/` fixtures by walking up from the current
-directory, and write their scratch outputs to `notebooks/out/` (gitignored).
+The notebooks locate the `data/` fixtures, which live in the pinned
+`tauargus-engine` checkout: `TAUARGUS_ENGINE_DIR` if set, then the sibling
+`tauargus-engine` checkout of the enclosing directories, then the enclosing
+directories themselves. They write scratch outputs to `notebooks/out/`
+(gitignored).
 
 The `notebooks` extra includes pandas, pyarrow (the Parquet cells) and the
 execution tools.

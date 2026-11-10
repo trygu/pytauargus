@@ -891,7 +891,7 @@ res = micro_arb(
     ],
     response_var="Var2",
     safety_rules=["NK(2,75)"],     # recycled across both tables
-    suppress="OPT(.,0)",           # "." -> table number; 0 = no time limit
+    suppress="OPT(.,5)",           # "." -> table number; 5 = 5-minute limit
     output_names=["out1.csv", "out2.csv"],
     output_type="1",             # CSV (the generator default is SBS/type 4)
 )
@@ -900,6 +900,17 @@ print()
 print("=== generated demo.arb ===")
 print(display_paths((OUT / "demo.arb").read_text()))
 '''),
+
+    md(
+        "**Why `OPT(.,5)` and not `OPT(.,0)`?** The second argument of",
+        "`OPT` is `MaxComputingTime` in minutes (legacy syntax). `0` means",
+        "no limit: the branch-and-bound phase runs until the suppression",
+        "is proven optimal. On table 1 (162 cells) that takes fractions",
+        "of a second; on table 2 (12,798 cells) it can take a long time,",
+        "so the demo bounds it at 5 minutes. At the limit the engine",
+        "returns the best suppression found so far, exactly like the",
+        "legacy tool.",
+    ),
 
     md(
         "### Per-table parameters",
@@ -1073,8 +1084,11 @@ for p in sorted(OUT.iterdir()):
     md(
         "## Gotchas & known limitations",
         "",
-        "- `suppress=\"OPT(.,0)\"` uses max-time `0` (no limit), so this example",
-        "  can finish without a deadline. Positive time limits are in minutes.",
+        "- `OPT` with max-time `0` runs to proven optimality with no",
+        "  deadline; on tables with thousands of cells that can take a",
+        "  long time. Use a positive `MaxComputingTime` (minutes) for a",
+        "  bounded run: the engine then returns the best suppression",
+        "  found so far (legacy behavior).",
         "- `protect()` and `micro_asc_rda()` write the `.asc` file too;",
         "  `micro_arb()` only references an existing `.asc` / `.rda` pair.",
         "- Working directories and original values are retained for analysis;",
