@@ -314,3 +314,28 @@ class TestNumericTokens:
         # default (0) is kept.
         cmds = self._parse(tmp_path, '<SUPPRESS> MOD(1)')
         assert cmds[-1].mod_max_time == 0
+
+    @pytest.mark.parametrize("value", ["2147483648", "-2147483649",
+                                       "-2147483648"])
+    def test_integer_range_fails_as_batch_error(self, tmp_path, value):
+        with pytest.raises(BatchError, match="Invalid number.*RND base"):
+            self._parse(tmp_path, f"<SUPPRESS> RND(1, {value})")
+
+    @pytest.mark.parametrize("value", ["Inf", "-Inf", "NaN", "1e309"])
+    def test_nonfinite_lambda_fails_as_batch_error(self, tmp_path, value):
+        arb = tmp_path / "a.arb"
+        arb.write_text('<OPENMICRODATA> "d.asc"\n'
+                       '<OPENMETADATA> "d.rda"\n'
+                       f'<SPECIFYTABLE> "A"|"R"||,{value}\n')
+        with pytest.raises(BatchError,
+                           match="Invalid number.*SPECIFYTABLE lambda"):
+            parse_batch(arb)
+
+    def test_largest_integer_and_finite_scientific_float(self, tmp_path):
+        cmds = self._parse(tmp_path, "<SUPPRESS> RND(1, 2147483647)")
+        assert cmds[-1].rnd_base == 2147483647
+        arb = tmp_path / "a.arb"
+        arb.write_text('<OPENMICRODATA> "d.asc"\n'
+                       '<OPENMETADATA> "d.rda"\n'
+                       '<SPECIFYTABLE> "A"|"R"||,1e3\n')
+        assert parse_batch(arb)[-1].lam == 1000
