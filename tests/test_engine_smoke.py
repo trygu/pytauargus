@@ -42,9 +42,9 @@ def test_tables_computed(engine):
     """Both tables must be computed (cells present) before any suppression."""
     tau = engine._tau
     for i in range(engine._n_tables):
-        ncell, _ = tau.get_total_table_size(i)
+        _, ncell, _ = tau.get_total_table_size(i)
         assert ncell > 0, f"table {i} has no cells"
-        mn, mx = tau.get_minimum_cell_value(i)
+        _, mn, mx = tau.get_minimum_cell_value(i)
         assert mn == mn  # not NaN
         assert mn >= 0
         assert mx >= mn

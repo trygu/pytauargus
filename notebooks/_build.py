@@ -59,14 +59,22 @@ def write_notebook(name: str, cells: list):
 # ── shared setup cell (used in all notebooks) ─────────────────────────────────
 
 SETUP = code('''\
+import os
 from pathlib import Path
 import pytauargus
 
-# Locate the repo's data/ fixtures (works from notebooks/ or repo root)
+# Locate the data/ fixtures, which live in the pinned tauargus-engine
+# checkout: TAUARGUS_ENGINE_DIR if set, then the sibling tauargus-engine
+# checkout of each enclosing directory, then the enclosing directories
+# themselves (legacy in-engine layout).
 _here = Path.cwd()
+_engine_dir = os.environ.get("TAUARGUS_ENGINE_DIR")
+_cands = ([_engine_dir] if _engine_dir else []) + [
+    str(p / "tauargus-engine") for p in [_here, *_here.parents]
+] + [str(p) for p in [_here, *_here.parents]]
 DATA = next(
-    (p / "data") for p in [_here, *_here.parents]
-    if (p / "data" / "tau_testW.asc").exists()
+    (Path(c) / "data") for c in _cands
+    if (Path(c) / "data" / "tau_testW.asc").exists()
 )
 OUT = _here / "out"          # scratch dir for notebook outputs (gitignored)
 OUT.mkdir(exist_ok=True)
@@ -324,12 +332,15 @@ for i, v in enumerate(meta.variables):
     ),
     code('''\
 from pytauargus.engine import run_batch
+from pytauargus import engine_meta
 
 eng = run_batch(DATA / "TestRecode.arb")
 print(f"engine version: {eng.version}")
+_meta = engine_meta()
+print(f"native build  : engine {_meta['engine_sha'][:7]}, HiGHS {_meta['highs_version']}")
 print(f"tables: {eng._n_tables}")
 for i in range(eng._n_tables):
-    ncell, _ = eng._tau.get_total_table_size(i)
+    _, ncell, _ = eng._tau.get_total_table_size(i)
     spec, _ = eng._tables[i]
     print(f"  table {i+1}: {' x '.join(spec.exp_vars):<24} | {spec.resp_var}  →  {ncell} cells")
 '''),
@@ -389,8 +400,8 @@ STATUS_NAMES = {
 }
 
 tau = eng._tau
-n = tau.get_total_table_size(0)[0]
-statuses = Counter(tau.get_table_cell_status(0, j) for j in range(n))
+n = tau.get_total_table_size(0)[1]
+statuses = Counter(tau.get_table_cell_status(0, j)[1] for j in range(n))
 print(f"Table 1 — {n} cells:")
 for code_, count in sorted(statuses.items()):
     print(f"  {STATUS_NAMES.get(code_, code_):<24} {count}")
@@ -407,7 +418,7 @@ for code_, count in sorted(statuses.items()):
     code('''\
 spec, _ = eng._tables[0]
 exp = [eng.metadata.index_of(nm) for nm in spec.exp_vars]
-max_dim = [tau.get_var_number_of_codes(vi)[1] for vi in exp]   # active codes
+max_dim = [tau.get_var_number_of_codes(vi)[2] for vi in exp]   # active codes
 print(f"table 1 dims: {max_dim}")
 print()
 dim = [0, 0]
@@ -576,8 +587,8 @@ STATUS_NAMES = {
 
 eng = run_batch(DATA / "TestRecode.arb")
 tau = eng._tau
-n = tau.get_total_table_size(0)[0]
-before = Counter(tau.get_table_cell_status(0, j) for j in range(n))
+n = tau.get_total_table_size(0)[1]
+before = Counter(tau.get_table_cell_status(0, j)[1] for j in range(n))
 print(f"Table 1 — {n} cells, pre-suppression:")
 for code_, cnt in sorted(before.items()):
     print(f"  {STATUS_NAMES.get(code_, code_):<24} {cnt}")
@@ -605,7 +616,7 @@ for code_, cnt in sorted(before.items()):
 # Suppress table 1 (tab_no is 1-based in the API, as in the .arb grammar)
 eng.suppress(Suppress(kind="OPT", tab_no=1))
 
-after = Counter(tau.get_table_cell_status(0, j) for j in range(n))
+after = Counter(tau.get_table_cell_status(0, j)[1] for j in range(n))
 print("Table 1 — after OPT suppression:")
 for code_, cnt in sorted(after.items()):
     print(f"  {STATUS_NAMES.get(code_, code_):<24} {cnt}")
@@ -671,6 +682,34 @@ for r in rows:
         "  then `eng.audit(1)` — a 12 726-cell table.",
         "- Compare OPT vs MOD on table 1 and diff the status counts.",
     ),
+
+    md(
+        "## Engine errors (0.7.0)",
+        "",
+        "Native engine failures are raised as `TauArgusNativeError` (a",
+        "`BatchError` subclass, so existing `except BatchError` handlers",
+        "still catch them) carrying:",
+        "",
+        "- `e.code` — the native error code (0 when the call reports none)",
+        "- a message with the legacy catalog text for that code",
+        "",
+        "Running OPT on an already-optimised table is rejected by the",
+        "native engine with legacy code 5008. `eng` already ran OPT in",
+        "section 2, so the second run fails:",
+    ),
+    code('''\
+from pytauargus import TauArgusNativeError
+from pytauargus.batch import BatchError
+
+try:
+    eng.suppress(Suppress(kind="OPT", tab_no=1))  # second OPT on `eng`
+    raise AssertionError("expected the second OPT to fail")
+except TauArgusNativeError as e:
+    print(f"{type(e).__name__}: {e}")
+    print("code          :", e.code)
+    print("is BatchError :", isinstance(e, BatchError))
+    assert e.code == 5008
+'''),
 
     md(
         "## 4. Export",
@@ -1014,7 +1053,7 @@ print(f"Running {arb_path.name}…\\n")
 
 eng = run_batch(arb_path)
 for i in range(eng._n_tables):
-    ncell, _ = eng._tau.get_total_table_size(i)
+    _, ncell, _ = eng._tau.get_total_table_size(i)
     spec, _ = eng._tables[i]
     print(f"  table {i+1}: {' x '.join(spec.exp_vars):<24} | {spec.resp_var}  →  {ncell} cells")
 '''),

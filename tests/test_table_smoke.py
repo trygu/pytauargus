@@ -47,7 +47,7 @@ def test_metadata_is_tabular(engine):
 
 
 def test_table_has_cells(engine):
-    ncell, _ = engine._tau.get_total_table_size(0)
+    _, ncell, _ = engine._tau.get_total_table_size(0)
     assert ncell > 0
 
 
@@ -58,13 +58,13 @@ def test_grand_total_cell(engine):
     are recomputed from the leaves; the value is therefore only checked to be
     of the right order of magnitude (the file's grand total is ~16.8M).
     """
-    total = engine._tau.get_table_cell_value(0, 0)
+    _, total = engine._tau.get_table_cell_value(0, 0)
     assert total == total  # not NaN
     assert 1e6 < total < 2e8
 
 
 def test_min_cell_value_finite(engine):
-    mn, mx = engine._tau.get_minimum_cell_value(0)
+    _, mn, mx = engine._tau.get_minimum_cell_value(0)
     assert mn == mn  # not NaN
     assert mn >= 0
     assert mx >= mn
@@ -79,7 +79,7 @@ _EX1 = DATA / "examples" / "ex1"
 
 def _code_index(eng, var_name, code):
     vi = eng.metadata.index_of(var_name)
-    _n, n_active = eng._tau.get_var_number_of_codes(vi)
+    _, _n, n_active = eng._tau.get_var_number_of_codes(vi)
     for ci in range(n_active):
         ok, _ct, cs, _miss, _level = eng._tau.get_var_code(vi, ci)
         if ok and cs.strip() == code:
@@ -101,9 +101,9 @@ def test_manual_unsafe_default_margin_is_20_percent():
     value, status = _cell(eng, 0, ("Sto", "Stor"), ("Reg", "Nord"))
     assert (value, status) == (150.0, 9)  # single-company cell, manual U
     n_cols = eng._tau.get_var_number_of_codes(
-        eng.metadata.index_of("Reg"))[1]
+        eng.metadata.index_of("Reg"))[2]
     ncell = _code_index(eng, "Sto", "Stor") * n_cols + _code_index(eng, "Reg", "Nord")
-    lpl, upl = eng._tau.get_table_cell_protection_levels(0, ncell)
+    _, lpl, upl = eng._tau.get_table_cell_protection_levels(0, ncell)
     assert (lpl, upl) == (30.0, 30.0), f"expected 20% margin, got {(lpl, upl)}"
 
 
@@ -115,16 +115,16 @@ def test_opt_protects_manual_unsafe_with_secondary_pattern():
     from pytauargus.batch import Suppress
 
     eng = run_batch(_EX1 / "ex1.arb")
-    n, _ = eng._tau.get_total_table_size(0)
-    before = [eng._tau.get_table_cell_value(0, i) for i in range(n)]
+    _, n, _ = eng._tau.get_total_table_size(0)
+    before = [eng._tau.get_table_cell_value(0, i)[1] for i in range(n)]
 
     eng.suppress(Suppress(kind="OPT", tab_no=1))
 
-    after = [eng._tau.get_table_cell_value(0, i) for i in range(n)]
+    after = [eng._tau.get_table_cell_value(0, i)[1] for i in range(n)]
     assert before == after, "cell suppression must not rewrite cell values"
     value, status = _cell(eng, 0, ("Sto", "Stor"), ("Reg", "Nord"))
     assert (value, status) == (150.0, 9), "unsafe cell stays published"
     secondary = sum(
         1 for i in range(n)
-        if eng._tau.get_table_cell_status(0, i) == CS_SECONDARY_UNSAFE_MANUAL)
+        if eng._tau.get_table_cell_status(0, i)[1] == CS_SECONDARY_UNSAFE_MANUAL)
     assert secondary >= 1, "expected a non-empty secondary pattern"

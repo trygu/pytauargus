@@ -24,7 +24,7 @@ except PackageNotFoundError:
 __all__ = [
     "TauArgus", "HiTaSCtrl", "RounderCtrl", "Engine", "engine_meta",
     "write_hrc", "HrcError", "protect", "ProtectResult", "TableResult",
-    "to_microdata", "make_frame", "__version__",
+    "to_microdata", "make_frame", "TauArgusNativeError", "__version__",
 ]
 
 
@@ -34,6 +34,10 @@ def __getattr__(name):
         from .engine import Engine
 
         return Engine
+    if name == "TauArgusNativeError":
+        from .engine import TauArgusNativeError
+
+        return TauArgusNativeError
     if name in ("write_hrc", "HrcError"):
         from . import hrc
 

@@ -29,12 +29,12 @@ def test_positive_time_limit_across_fresh_engines(method, tmp_path):
         for _ in range(3):
             eng = run_batch(batch)
             tau = eng._tau
-            ncell, _ = tau.get_total_table_size(0)
-            before = [tau.get_table_cell_status(0, i) for i in range(ncell)]
+            _, ncell, _ = tau.get_total_table_size(0)
+            before = [tau.get_table_cell_status(0, i)[1] for i in range(ncell)]
             assert any(status in range(3, 10) for status in before)
             limits = {method.lower() + "_max_time": 1}
             eng.suppress(Suppress(kind=method, tab_no=1, **limits))
-            after = [tau.get_table_cell_status(0, i) for i in range(ncell)]
+            after = [tau.get_table_cell_status(0, i)[1] for i in range(ncell)]
             assert sum(s in (11, 12) for s in after) > sum(
                 s in (11, 12) for s in before
             )

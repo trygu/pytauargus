@@ -48,8 +48,8 @@ CS_EMPTY = 14
 
 
 def _statuses(tau, tab):
-    ncell, _ = tau.get_total_table_size(tab)
-    return [tau.get_table_cell_status(tab, i) for i in range(ncell)]
+    _, ncell, _ = tau.get_total_table_size(tab)
+    return [tau.get_table_cell_status(tab, i)[1] for i in range(ncell)]
 
 
 def count_secondary(tau, tab):
@@ -117,9 +117,9 @@ class TestRNDSuppress:
         engine.suppress(Suppress(kind="RND", tab_no=tab + 1, rnd_base=base))
 
         # Rounding must not produce negative cell values.
-        ncell, _ = tau.get_total_table_size(tab)
+        _, ncell, _ = tau.get_total_table_size(tab)
         for i in range(ncell):
-            v = tau.get_table_cell_value(tab, i)
+            _, v = tau.get_table_cell_value(tab, i)
             if v == v:  # skip NaN
                 assert v >= 0, f"Cell {i} negative after RND: {v}"
 

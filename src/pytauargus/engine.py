@@ -49,6 +49,19 @@ from .batch import (
 logger = logging.getLogger(__name__)
 
 
+class TauArgusNativeError(BatchError):
+    """A native engine call failed.
+
+    Carries the native error code in ``code`` (0 when the call reports
+    none). When a code is reported, the message includes the catalog
+    text for that code (via the producing object's ``error_string``).
+    """
+
+    def __init__(self, message: str, code: int = 0):
+        super().__init__(message)
+        self.code = code
+
+
 # WriteCSV/WriteCSVTable index into DimSequence[d] for each table dimension.
 # The native code dereferences it (a null/empty sequence segfaults), so the
 # identity sequence {0..9} (Java SaveTable.MAXDIM) is the correct default.
@@ -1224,23 +1237,26 @@ class Engine:
     def _set_in_table(self, idx: int, cell: dict) -> None:
         """Fill one cell (codes already normalised by ``_build_cell``)."""
         codes = cell["codes"]
-        ok = self._tau.set_in_table(
+        ok, err, ev = self._tau.set_in_table(
             index=idx, codes=codes, shadow=cell["shadow"], cost=cell["cost"],
             response=cell["response"], freq=cell["freq"],
             max_score_cell=cell["max_score"], max_score_holding=[],
             status=cell["status"], lpl=cell["lower"], upl=cell["upper"])
         if not ok:
-            raise BatchError(
-                f"SetInTable failed for table {idx + 1}: codes={codes}")
+            msg = f"SetInTable failed for table {idx + 1}: codes={codes}"
+            if err != 0:
+                msg += f" (code {err}): {self._tau.error_string(err)}"
+            raise TauArgusNativeError(msg, code=err)
 
     def _backup_cell_statuses(self, idx: int):
-        ncell, _ = self._tau.get_total_table_size(idx)
+        _, ncell, _ = self._tau.get_total_table_size(idx)
         statuses = []
         lpls = []
         upls = []
         for nc in range(ncell):
-            statuses.append(self._tau.get_table_cell_status(idx, nc))
-            l, u = self._tau.get_table_cell_protection_levels(idx, nc)
+            _, st = self._tau.get_table_cell_status(idx, nc)
+            statuses.append(st)
+            _, l, u = self._tau.get_table_cell_protection_levels(idx, nc)
             lpls.append(l)
             upls.append(u)
         return statuses, lpls, upls
@@ -1275,7 +1291,7 @@ class Engine:
         # useStatusOnly: no (non-MAN) safety rule → status is used directly.
         has_status = not (srs.dom_rule or srs.pq_rule or srs.min_freq
                           or srs.zero_rule or srs.apply_weight or srs.apply_peep)
-        ok = self._tau.set_table_safety_info(
+        ok, errc = self._tau.set_table_safety_info(
             index=idx,
             has_max_score=has_max_score,
             dominance_rule=srs.dom_rule,
@@ -1294,7 +1310,10 @@ class Engine:
             ns_empty_safety_range=10,
         )
         if not ok:
-            raise BatchError(f"SetTableSafetyInfo failed for table {idx + 1}")
+            msg = f"SetTableSafetyInfo failed for table {idx + 1}"
+            if errc != 0:
+                msg += f" (code {errc}): {self._tau.error_string(errc)}"
+            raise TauArgusNativeError(msg, code=errc)
 
     # -- suppress ------------------------------------------------------------
     def suppress(self, cmd: Suppress) -> None:
@@ -1317,11 +1336,11 @@ class Engine:
     def _table_cell_bounds(self, tab: int) -> Tuple[float, float]:
         """Return (min, max) finite cell value of ``tab`` (Java minTabVal/maxTabVal)."""
         tau = self._tau
-        n, _ = tau.get_total_table_size(tab)
+        _, n, _ = tau.get_total_table_size(tab)
         lo = None
         hi = None
         for i in range(n):
-            v = tau.get_table_cell_value(tab, i)
+            _, v = tau.get_table_cell_value(tab, i)
             if v != v:  # NaN
                 continue
             if lo is None or v < lo:
@@ -1362,7 +1381,8 @@ class Engine:
                 do_count_bounds=cmd.mod_min_freq,
             )
             if ok > 0:
-                raise BatchError(f"AHiTaS failed: {self._hitas.error_string(ok)}")
+                raise TauArgusNativeError(
+                    f"AHiTaS failed: {self._hitas.error_string(ok)}", code=ok)
             ok2, n = self._tau.set_secondary_hitas(tab)
             if not ok2:
                 raise BatchError(f"SetSecondaryHITAS failed for table {tab + 1}")
@@ -1381,7 +1401,9 @@ class Engine:
                 in_file_jj=jj_in, out_file=jj_out, max_time=cmd.opt_max_time
             )
             if res > 1:
-                raise BatchError(f"FullJJ failed (code {res}): {self._hitas.error_string(res)}")
+                raise TauArgusNativeError(
+                    f"FullJJ failed (code {res}): {self._hitas.error_string(res)}",
+                    code=res)
             # Append " m" to every line of JJ.OUT (secondary-marker form) -> JJ2.OUT
             with open(jj_out, encoding="utf-8", errors="replace") as fin, \
                  open(jj2, "w", encoding="utf-8") as fout:
@@ -1391,8 +1413,9 @@ class Engine:
                     fout.write(line.rstrip("\n") + " m\n")
             code, n = self._tau.set_secondary_jjformat(tab, jj2, False)
             if code != 1:
-                raise BatchError(
-                    f"SetSecondaryJJFormat failed (code {code})")
+                raise TauArgusNativeError(
+                    f"SetSecondaryJJFormat failed (code {code}): "
+                    f"{self._tau.error_string(code)}", code=code)
             logger.info("OPT suppress: %d cells set secondary.", n)
 
     def _correct_round_jj(self, path: str, base: int, no_partitions: bool,
@@ -1459,7 +1482,10 @@ class Engine:
                 max_time=cmd.rnd_time,
             )
             if result > 0:
-                raise BatchError(f"DoRound failed (result {result}, err {err})")
+                msg = f"DoRound failed (result {result}, err {err})"
+                if err != 0:
+                    msg += f": {self._rounder.error_string(err)}"
+                raise TauArgusNativeError(msg, code=err)
             if not self._tau.set_rounded_response(jj_out, tab):
                 raise BatchError(
                     f"SetRoundedResponse failed for table {tab + 1}")
@@ -1514,7 +1540,14 @@ class Engine:
             jj = os.path.join(tmp, "Anneke.JJ")
             if not self._tau.write_jj_format(tab, jj, lo, hi, False, False, False):
                 raise BatchError("WriteJJFormat failed for AUDIT")
-            rows = audit_jj(jj)
+            try:
+                rows = audit_jj(jj)
+            except RuntimeError as e:
+                # The binding raises "audit_jj failed (rc=N): <file>" on a
+                # non-zero rc; re-raise it typed with the native code.
+                m = re.search(r"audit_jj failed \(rc=(-?\d+)\)", str(e))
+                code = int(m.group(1)) if m else 0
+                raise TauArgusNativeError(str(e), code=code) from e
 
         by_cell: Dict[int, Tuple[float, float, bool]] = {}
         for r in rows:
@@ -1586,7 +1619,7 @@ class Engine:
     def _recode_truncate(self, var_idx: int, max_level: int) -> None:
         """Deactivate every node at ``max_level`` that has children, then recode."""
         self._tau.undo_recode(var_idx)
-        n_codes, _ = self._tau.get_var_number_of_codes(var_idx)
+        _, n_codes, _ = self._tau.get_var_number_of_codes(var_idx)
         closed = 0
         for i in range(n_codes):
             ok, _, _, _, level, n_child, _ = self._tau.get_var_code_properties(var_idx, i)
@@ -1604,7 +1637,7 @@ class Engine:
         """Deactivate the parent codes listed in a <TREERECODE> file, then recode."""
         self._tau.undo_recode(var_idx)
         # Build code-string -> code-index lookup.
-        n_codes, _ = self._tau.get_var_number_of_codes(var_idx)
+        _, n_codes, _ = self._tau.get_var_number_of_codes(var_idx)
         index_by_code: Dict[str, int] = {}
         for i in range(n_codes):
             ok, _, cs, _, _ = self._tau.get_var_code(var_idx, i)
@@ -1677,7 +1710,7 @@ class Engine:
         # Per-dim active-code counts (== native SizeDim after recode).
         max_dim = []
         for vi in exp_vars:
-            n_codes, n_active = tau.get_var_number_of_codes(vi)
+            _, n_codes, n_active = tau.get_var_number_of_codes(vi)
             max_dim.append(n_active)
 
         # Pre-compute code strings for each (var, code_idx) to avoid repeated
@@ -1971,7 +2004,7 @@ class Engine:
         code_index: List[Dict[str, int]] = []
         max_dim: List[int] = []
         for vi in exp_vars:
-            n_codes, n_active = tau.get_var_number_of_codes(vi)
+            _, n_codes, n_active = tau.get_var_number_of_codes(vi)
             max_dim.append(n_active)
             var = meta.variables[vi]
             arr: List[str] = []

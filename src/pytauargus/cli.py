@@ -246,7 +246,7 @@ def cmd_compute(args) -> int:
     arb = Path(args.batch)
     eng = run_batch(arb)
     for i in range(eng._n_tables):
-        ncell, _ = eng._tau.get_total_table_size(i)
+        _, ncell, _ = eng._tau.get_total_table_size(i)
         print(f"table {i + 1}: {ncell} cells")
     return 0
 
@@ -351,8 +351,8 @@ def cmd_tables(args) -> int:
     arb = Path(args.batch)
     eng = run_batch(arb)
     for i in range(eng._n_tables):
-        ncell, _ = eng._tau.get_total_table_size(i)
-        mn, mx = eng._tau.get_minimum_cell_value(i)
+        _, ncell, _ = eng._tau.get_total_table_size(i)
+        _, mn, mx = eng._tau.get_minimum_cell_value(i)
         spec, _ = eng._tables[i] if i < len(eng._tables) else (None, None)
         exp = ", ".join(spec.exp_vars) if spec else "?"
         resp = spec.resp_var if spec else "?"

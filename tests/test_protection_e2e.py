@@ -74,7 +74,7 @@ def _run_dominance(method, workdir):
     audit = {row["cell"]: row for row in outcome.engine.audit(0)}
     for i in primary:
         row = audit[i]
-        lpl, upl = outcome.engine._tau.get_table_cell_protection_levels(0, i)
+        _, lpl, upl = outcome.engine._tau.get_table_cell_protection_levels(0, i)
         assert lpl > 0 and upl > 0
         assert row["value"] - row["min"] >= lpl - TOL
         assert row["max"] - row["value"] >= upl - TOL
@@ -103,7 +103,7 @@ def _run_pipeline(method, workdir):
     assert before.status()[primary] == "U"
     assert before.unsafe()[primary] == pytest.approx(150)
     required = 30.0  # 20% of 150, the legacy default manual margin.
-    lpl, upl = engine._tau.get_table_cell_protection_levels(0, primary)
+    _, lpl, upl = engine._tau.get_table_cell_protection_levels(0, primary)
     assert (lpl, upl) == pytest.approx((required, required))
 
     # Negative control: suppressing only this cell leaves its value recoverable

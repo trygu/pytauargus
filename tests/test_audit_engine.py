@@ -50,10 +50,10 @@ def engine():
 # ===================================================================
 
 def count_unsafe(tau, tab):
-    ncell, _ = tau.get_total_table_size(tab)
+    _, ncell, _ = tau.get_total_table_size(tab)
     return sum(
         1 for i in range(ncell)
-        if tau.get_table_cell_status(tab, i) in (3, 4, 5, 6, 7, 8, 9)
+        if tau.get_table_cell_status(tab, i)[1] in (3, 4, 5, 6, 7, 8, 9)
     )
 
 
@@ -64,7 +64,7 @@ def _cell_info(engine, tab):
     exp = [engine._metadata.index_of(n) for n in spec.exp_vars]
     max_dim = []
     for vi in exp:
-        n_codes, n_active = tau.get_var_number_of_codes(vi)
+        _, n_codes, n_active = tau.get_var_number_of_codes(vi)
         max_dim.append(n_active)
     out = {}
     dim = [0] * len(exp)
@@ -195,8 +195,8 @@ class TestEngineAudit:
         tab = 0
         spec, _ = engine._tables[tab]
         vi = [engine._metadata.index_of(n) for n in spec.exp_vars]
-        n0 = tau.get_var_number_of_codes(vi[0])[1]
-        n1 = tau.get_var_number_of_codes(vi[1])[1]
+        n0 = tau.get_var_number_of_codes(vi[0])[2]
+        n1 = tau.get_var_number_of_codes(vi[1])[2]
         lines = []
         for d0 in range(n0):
             for d1 in range(n1):
@@ -235,7 +235,7 @@ class TestIntermediatePlusAR:
             engine._metadata.index_of(spec.resp_var)]
         n_dec = resp_var.n_decimals
         topn = engine._top_n_needed(srs, False)
-        ncell, _ = tau.get_total_table_size(tab)
+        _, ncell, _ = tau.get_total_table_size(tab)
         n_cols = n_exp + 1 + 1 + 1 + 1 + topn + 1 + 1 + 1 + 6
 
         out = tmp_path / "int_ar.tab"
@@ -270,7 +270,7 @@ class TestIntermediatePlusAR:
         spec, srs = engine._tables[tab]
         n_exp = len(spec.exp_vars)
         topn = engine._top_n_needed(srs, False)
-        ncell, _ = tau.get_total_table_size(tab)
+        _, ncell, _ = tau.get_total_table_size(tab)
         n_cols = n_exp + 1 + 1 + 1 + 1 + topn + 1 + 1 + 1
 
         out = tmp_path / "int_plain.tab"
@@ -295,7 +295,7 @@ def test_writetable_ar_option(tmp_path):
         "tab = 0\n"
         "spec, srs = eng._tables[tab]\n"
         "tau = eng._tau\n"
-        "ncell, _ = tau.get_total_table_size(tab)\n"
+        "_, ncell, _ = tau.get_total_table_size(tab)\n"
         "n_exp = len(spec.exp_vars)\n"
         "topn = eng._top_n_needed(srs, False)\n"
         "n_dec = eng._metadata.variables"
