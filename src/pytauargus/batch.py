@@ -13,6 +13,7 @@ of those commands against the native engine lives in ``engine.py``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -169,17 +170,24 @@ def _parse_int(value: str, what: str) -> int:
     ``BatchError`` that names the field, so a bad value fails the batch
     loudly instead of surfacing as a raw ``ValueError`` traceback."""
     try:
-        return int(value)
+        n = int(value)
     except ValueError:
         raise BatchError(f"Invalid number '{value}' for {what}")
+    # Use the shared R/Python batch range; R reserves -2**31 for NA.
+    if not (-2147483647 <= n <= 2147483647):
+        raise BatchError(f"Invalid number '{value}' for {what}")
+    return n
 
 
 def _parse_float(value: str, what: str) -> float:
     """Parse a numeric batch token as a float (see ``_parse_int``)."""
     try:
-        return float(value)
+        n = float(value)
     except ValueError:
         raise BatchError(f"Invalid number '{value}' for {what}")
+    if not isfinite(n):
+        raise BatchError(f"Invalid number '{value}' for {what}")
+    return n
 
 
 # ===========================================================================
