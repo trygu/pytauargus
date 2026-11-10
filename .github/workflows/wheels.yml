@@ -56,8 +56,10 @@ jobs:
       matrix:
         os: [macos-15]
         # The PR report builds one CPython per platform (3.12); tag runs
-        # build the full supported matrix.
-        python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12", "3.13", "3.14", "3.15"]') }}
+        # build the full supported matrix. 3.15 stays out for 0.7.0
+        # (new CPython release; re-add in 0.7.1+, per the CI
+        # simplification plan item C).
+        python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12", "3.13", "3.14"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,6 +80,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+
+      # Caches let a re-run (or the other Python versions of the run)
+      # skip the HiGHS and engine compiles. Each job saves under its own
+      # exact key and restores by prefix, so parallel jobs never race on
+      # a save. Bump the v1 generation if the build flags change.
+      - name: Restore HiGHS cache
+        id: cache-highs
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/highs-prefix
+          key: v1-highs-macos-arm64-${{ env.HIGHS_TAG }}-${{ matrix.python }}
+          restore-keys: |
+            v1-highs-macos-arm64-${{ env.HIGHS_TAG }}-
 
       - name: Build HiGHS from source (cached)
         id: highs
@@ -100,6 +115,22 @@ jobs:
           touch "$PREFIX/.done"
           echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
 
+      - name: Save HiGHS cache
+        if: steps.cache-highs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/highs-prefix
+          key: v1-highs-macos-arm64-${{ env.HIGHS_TAG }}-${{ matrix.python }}
+
+      - name: Restore engine build cache
+        id: cache-engine
+        uses: actions/cache/restore@v4
+        with:
+          path: tauargus-engine/engine/build
+          key: v1-engine-macos-arm64-${{ env.ENGINE_REV }}-${{ env.HIGHS_TAG }}-${{ matrix.python }}
+          restore-keys: |
+            v1-engine-macos-arm64-${{ env.ENGINE_REV }}-${{ env.HIGHS_TAG }}-
+
       - name: Build engine superbuild (cached)
         shell: bash
         run: |
@@ -113,6 +144,13 @@ jobs:
             -DHighs_DIR="${{ steps.highs.outputs.prefix }}/lib/cmake/Highs"
           cmake --build tauargus-engine/engine/build -j
           touch tauargus-engine/engine/build/.done
+
+      - name: Save engine build cache
+        if: steps.cache-engine.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: tauargus-engine/engine/build
+          key: v1-engine-macos-arm64-${{ env.ENGINE_REV }}-${{ env.HIGHS_TAG }}-${{ matrix.python }}
 
       - name: Build wheel
         shell: bash
@@ -190,7 +228,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ${{ github.event_name == 'pull_request' && fromJSON('["cp312-cp312"]') || fromJSON('["cp311-cp311", "cp312-cp312", "cp313-cp313", "cp314-cp314", "cp315-cp315"]') }}
+        python: ${{ github.event_name == 'pull_request' && fromJSON('["cp312-cp312"]') || fromJSON('["cp311-cp311", "cp312-cp312", "cp313-cp313", "cp314-cp314"]') }}
         arch: [x86_64, aarch64]
         include:
           - arch: x86_64
@@ -217,11 +255,28 @@ jobs:
       - name: Toolchain (cmake/ninja/auditwheel)
         run: /opt/python/${{ matrix.python }}/bin/pip install cmake ninja "auditwheel>=6" "scikit-build-core>=0.10" "pybind11>=2.13"
 
-      - name: Build HiGHS from source
+      # Caches let a re-run (or the other Python versions of the run)
+      # skip the HiGHS and engine compiles. Each job saves under its own
+      # exact key and restores by prefix, so parallel jobs never race on
+      # a save. Bump the v1 generation if the build flags change.
+      - name: Restore HiGHS cache
+        id: cache-highs
+        uses: actions/cache/restore@v4
+        with:
+          path: highs-prefix
+          key: v1-highs-linux-${{ matrix.arch }}-${{ env.HIGHS_TAG }}-${{ matrix.python }}
+          restore-keys: |
+            v1-highs-linux-${{ matrix.arch }}-${{ env.HIGHS_TAG }}-
+
+      - name: Build HiGHS from source (cached)
         id: highs
         run: |
           set -euo pipefail
           PREFIX="$GITHUB_WORKSPACE/highs-prefix"
+          if [ -f "$PREFIX/.done" ]; then
+            echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           git clone --depth 1 --branch "$HIGHS_TAG" \
             https://github.com/ERGO-Code/HiGHS.git highs
           # Version script: export only the HiGHS C API. Without it,
@@ -244,16 +299,45 @@ jobs:
             -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,--exclude-libs,libstdc++.a -Wl,--exclude-libs,libsupc++.a -Wl,--exclude-libs,libgcc.a -Wl,--exclude-libs,libgcc_eh.a -Wl,--version-script=$GITHUB_WORKSPACE/highs/highs-export.vers"
           cmake --build highs/build -j
           cmake --install highs/build
+          touch "$PREFIX/.done"
           echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
 
-      - name: Build engine superbuild
+      - name: Save HiGHS cache
+        if: steps.cache-highs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: highs-prefix
+          key: v1-highs-linux-${{ matrix.arch }}-${{ env.HIGHS_TAG }}-${{ matrix.python }}
+
+      - name: Restore engine build cache
+        id: cache-engine
+        uses: actions/cache/restore@v4
+        with:
+          path: tauargus-engine/engine/build
+          key: v1-engine-linux-${{ matrix.arch }}-${{ env.ENGINE_REV }}-${{ env.HIGHS_TAG }}-${{ matrix.python }}
+          restore-keys: |
+            v1-engine-linux-${{ matrix.arch }}-${{ env.ENGINE_REV }}-${{ env.HIGHS_TAG }}-
+
+      - name: Build engine superbuild (cached)
         shell: bash
         run: |
           set -euo pipefail
+          if [ -f "tauargus-engine/engine/build/.done" ]; then
+            echo "engine already built"
+            exit 0
+          fi
           cmake -S tauargus-engine/engine -B tauargus-engine/engine/build \
             -DCMAKE_BUILD_TYPE=Release \
             -DHighs_DIR="$(dirname "$(find "${{ steps.highs.outputs.prefix }}" -name "[Hh]ighs[Cc]onfig.cmake" -o -name highs-config.cmake | head -n1)")"
           cmake --build tauargus-engine/engine/build -j
+          touch tauargus-engine/engine/build/.done
+
+      - name: Save engine build cache
+        if: steps.cache-engine.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: tauargus-engine/engine/build
+          key: v1-engine-linux-${{ matrix.arch }}-${{ env.ENGINE_REV }}-${{ env.HIGHS_TAG }}-${{ matrix.python }}
 
       # The engine libs carry the absolute build-tree RUNPATH. auditwheel
       # resolves such entries against the build host and grafts a
@@ -397,7 +481,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12", "3.13", "3.14", "3.15"]') }}
+        python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12", "3.13", "3.14"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -418,6 +502,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+
+      # Caches let a re-run (or the other Python versions of the run)
+      # skip the HiGHS and engine compiles. Each job saves under its own
+      # exact key and restores by prefix, so parallel jobs never race on
+      # a save. Bump the v1 generation if the build flags change.
+      - name: Restore HiGHS cache
+        id: cache-highs
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/highs-prefix
+          key: v1-highs-windows-x86_64-${{ env.HIGHS_TAG }}-${{ matrix.python }}
+          restore-keys: |
+            v1-highs-windows-x86_64-${{ env.HIGHS_TAG }}-
 
       - name: Build HiGHS from source (cached)
         id: highs
@@ -440,6 +537,22 @@ jobs:
           touch "$PREFIX/.done"
           echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
 
+      - name: Save HiGHS cache
+        if: steps.cache-highs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/highs-prefix
+          key: v1-highs-windows-x86_64-${{ env.HIGHS_TAG }}-${{ matrix.python }}
+
+      - name: Restore engine build cache
+        id: cache-engine
+        uses: actions/cache/restore@v4
+        with:
+          path: tauargus-engine/engine/build
+          key: v1-engine-windows-x86_64-${{ env.ENGINE_REV }}-${{ env.HIGHS_TAG }}-${{ matrix.python }}
+          restore-keys: |
+            v1-engine-windows-x86_64-${{ env.ENGINE_REV }}-${{ env.HIGHS_TAG }}-
+
       - name: Build engine superbuild (cached)
         shell: bash
         run: |
@@ -453,6 +566,13 @@ jobs:
             -DHighs_DIR="$(dirname "$(find "${{ steps.highs.outputs.prefix }}" -name "[Hh]ighs[Cc]onfig.cmake" -o -name highs-config.cmake | head -n1)")"
           cmake --build tauargus-engine/engine/build -j --config Release
           touch tauargus-engine/engine/build/.done
+
+      - name: Save engine build cache
+        if: steps.cache-engine.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: tauargus-engine/engine/build
+          key: v1-engine-windows-x86_64-${{ env.ENGINE_REV }}-${{ env.HIGHS_TAG }}-${{ matrix.python }}
 
       - name: Build wheel
         shell: bash
