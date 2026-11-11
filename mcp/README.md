@@ -2,16 +2,18 @@
 
 A Model Context Protocol (MCP) server for
 [Tau-Argus](https://github.com/trygu/tauargus-engine), the statistical
-disclosure control engine. It is the agent front-end of the D2.6
-architecture: an LLM or agent (for example OpenCode) drives the stateless
-engine over MCP, one tool call per task, with no server-side session.
-The `.arb` batch file is the state carrier of the batch flow. It is a
-thin wrapper over the `pytauargus` Python API; it re-implements no engine
-behaviour. Installing it also gives you the `pytauargus` package.
+disclosure control engine. It lets an AI assistant (for example
+OpenCode, or any other MCP client) work on your data: you point it at a
+microdata file, it explores the variables, protects the tables and
+reports what was suppressed and why. Each tool call is one
+self-contained task with its full result, so a long solve can be
+backgrounded by the client. It is a thin wrapper over the `pytauargus`
+Python API; it re-implements no engine behaviour. Installing it also
+gives you the `pytauargus` package and the `tauargus` CLI.
 
 ## What it does
 
-This is the first slice: the core loop, six tools.
+Six tools cover the core workflow.
 
 - **`tauargus_version`** reports the `pytauargus` package version and the
   native engine version.
@@ -29,13 +31,7 @@ This is the first slice: the core loop, six tools.
 - **`tauargus_audit`** audits the suppressed cells of a table computed
   by a batch and returns their realised feasibility intervals.
 
-Each tool call carries its inputs and returns a full result, so long
-solves can be backgrounded by the client. The server runs on the stdio
-transport.
-
-Later slices add the expertise layer (MCP prompts for the standard SDC
-procedures, `tauargus://doc/...` resources pointing at the 4.1 manual
-and the D2.6 vision) and the plain-language reporting contract.
+The server runs on the stdio transport.
 
 ## Install
 
@@ -50,9 +46,8 @@ pip install pytauargus-mcp
 pip install "pytauargus[mcp]"
 ```
 
-Installing it also gives you the `pytauargus` package and the
-`tauargus` CLI. To try it without installing anything (requires uv),
-run it with `uvx`:
+To try it without installing anything (requires uv), run it with
+`uvx`:
 
 ```bash
 uvx pytauargus-mcp
@@ -64,8 +59,11 @@ uvx pytauargus-mcp
 tauargus-mcp   # starts the server on stdio
 ```
 
-Point an MCP client at the console script. For OpenCode, add a
-`tauargus` server to the project or user config:
+The server is a local process that the client starts for you. Point the
+client at the `tauargus-mcp` console script. With a pip install it is on
+the `PATH`; without one, use `uvx pytauargus-mcp` instead.
+
+**OpenCode.** Add a `tauargus` server to the project or user config:
 
 ```json
 {
@@ -81,10 +79,8 @@ Point an MCP client at the console script. For OpenCode, add a
 }
 ```
 
-With a pip install the console script is on the `PATH`; without one,
-point the command at uv instead (`"command": ["uvx", "pytauargus-mcp"]`).
-
-Other MCP clients use the standard `mcpServers` shape:
+**Claude Desktop.** Add a `tauargus` entry to `claude_desktop_config.json`
+(the app opens it from Settings, Developer, Edit Config) and restart it:
 
 ```json
 {
@@ -93,6 +89,27 @@ Other MCP clients use the standard `mcpServers` shape:
   }
 }
 ```
+
+Desktop starts the command without your shell environment; if it does not
+find the script, use its absolute path (`which tauargus-mcp`).
+
+**Claude Code.**
+
+```bash
+claude mcp add tauargus -- tauargus-mcp
+```
+
+**Gemini CLI.**
+
+```bash
+gemini mcp add -s user tauargus tauargus-mcp
+```
+
+or add the same `mcpServers` entry to `~/.gemini/settings.json`.
+
+**ChatGPT.** Its custom connectors connect to a remote server over
+HTTPS and cannot start a local one, so this server does not work with
+ChatGPT.
 
 When the server connects, the client lists its six tools. In OpenCode,
 `/mcps` shows `✓ tauargus connected`.
