@@ -39,10 +39,23 @@ and the D2.6 vision) and the plain-language reporting contract.
 
 ## Install
 
+Python 3.11 to 3.14, on the platforms the `pytauargus` wheel covers
+(macOS arm64, Linux x86_64 and aarch64, Windows x86_64). The wheel
+bundles the native engine and HiGHS, so no compiler, CMake, R or Java
+is needed.
+
 ```bash
 pip install pytauargus-mcp
 # or, as an extra of the engine package:
 pip install "pytauargus[mcp]"
+```
+
+Installing it also gives you the `pytauargus` package and the
+`tauargus` CLI. To try it without installing anything (requires uv),
+run it with `uvx`:
+
+```bash
+uvx pytauargus-mcp
 ```
 
 ## Run
@@ -51,7 +64,27 @@ pip install "pytauargus[mcp]"
 tauargus-mcp   # starts the server on stdio
 ```
 
-Point an MCP client at the console script, for example:
+Point an MCP client at the console script. For OpenCode, add a
+`tauargus` server to the project or user config:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "tauargus": {
+        "type": "local",
+        "command": ["tauargus-mcp"]
+      }
+    }
+  }
+}
+```
+
+With a pip install the console script is on the `PATH`; without one,
+point the command at uv instead (`"command": ["uvx", "pytauargus-mcp"]`).
+
+Other MCP clients use the standard `mcpServers` shape:
 
 ```json
 {
@@ -60,6 +93,9 @@ Point an MCP client at the console script, for example:
   }
 }
 ```
+
+When the server connects, the client lists its six tools. In OpenCode,
+`/mcps` shows `✓ tauargus connected`.
 
 ## Develop (monorepo)
 
