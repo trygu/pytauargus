@@ -52,7 +52,14 @@ from .batch import (
     Tokenizer,
     parse_batch,
 )
-from .engine import IDENTITY_DIM_SEQUENCE, Engine, parse_rda, run_batch
+from .engine import (
+    IDENTITY_DIM_SEQUENCE,
+    Engine,
+    AuditError,
+    SolverError,
+    parse_rda,
+    run_batch,
+)
 from .protect import protect
 
 
@@ -515,6 +522,34 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def exit_code_for(exc: BaseException) -> int:
+    """Stable exit-code mapping for the batch path (0.7.0 contract).
+
+    The 0.7.0 contract (docs/binding-error-contract.md) maps failure
+    class to a stable code so callers can distinguish *why* a batch run
+    failed instead of the flat exit 2 the 0.6.x CLI returned for every
+    ``BatchError``:
+
+        0  success
+        1  unexpected internal error (a bug)
+        2  usage error (bad CLI invocation; argparse + command checks)
+        3  engine failure (bad batch file, native core error, I/O)
+        4  solver failure (HiTaS suppression, rounder)
+        5  audit failure (CSP realized-interval audit)
+
+    Usage errors (exit 2) are produced by argparse and the command
+    handlers themselves, not here; everything that reaches this helper
+    is a runtime failure of a command that started executing.
+    """
+    if isinstance(exc, AuditError):
+        return 5
+    if isinstance(exc, SolverError):
+        return 4
+    if isinstance(exc, BatchError):
+        return 3
+    return 1
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -525,12 +560,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     try:
         return args.func(args)
-    except BatchError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
     except Exception as exc:  # noqa: BLE001
         print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return exit_code_for(exc)
 
 
 if __name__ == "__main__":  # pragma: no cover

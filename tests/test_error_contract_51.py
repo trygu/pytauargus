@@ -248,9 +248,12 @@ def _run_cli(argv):
                           capture_output=True, text=True, env=env)
 
 
-def test_cli_save_write_failure_exits_nonzero(tmp_path):
+def test_cli_save_write_failure_exits_three(tmp_path):
+    # Phase 6.1 contract: a failed table write is an engine failure
+    # (BatchError), mapped to exit 3 (docs/binding-error-contract.md);
+    # 0.6.x returned a flat exit 2 for every BatchError.
     out = tmp_path / "no-such-dir" / "table.csv"
     proc = _run_cli(["save", str(ARB), "--out", str(out)])
-    assert proc.returncode == 2
+    assert proc.returncode == 3
     assert "wrote table" not in proc.stdout
     assert "error:" in proc.stderr

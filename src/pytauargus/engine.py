@@ -63,6 +63,21 @@ class TauArgusNativeError(BatchError):
         self.code = code
 
 
+class SolverError(TauArgusNativeError):
+    """A solver call failed (HiTaS suppression, rounder).
+
+    Distinct from core-engine failures for the CLI exit-code contract:
+    ``main`` maps it to exit 4 (exit 3 for plain engine failures).
+    """
+
+
+class AuditError(TauArgusNativeError):
+    """The CSP realized-interval audit failed.
+
+    Distinct for the CLI exit-code contract: ``main`` maps it to exit 5.
+    """
+
+
 # WriteCSV/WriteCSVTable index into DimSequence[d] for each table dimension.
 # The native code dereferences it (a null/empty sequence segfaults), so the
 # identity sequence {0..9} (Java SaveTable.MAXDIM) is the correct default.
@@ -1399,7 +1414,7 @@ class Engine:
                 do_count_bounds=cmd.mod_min_freq,
             )
             if ok > 0:
-                raise TauArgusNativeError(
+                raise SolverError(
                     f"AHiTaS failed: {self._hitas.error_string(ok)}", code=ok)
             ok2, n = self._tau.set_secondary_hitas(tab)
             if not ok2:
@@ -1419,7 +1434,7 @@ class Engine:
                 in_file_jj=jj_in, out_file=jj_out, max_time=cmd.opt_max_time
             )
             if res > 1:
-                raise TauArgusNativeError(
+                raise SolverError(
                     f"FullJJ failed (code {res}): {self._hitas.error_string(res)}",
                     code=res)
             # Append " m" to every line of JJ.OUT (secondary-marker form) -> JJ2.OUT
@@ -1503,7 +1518,7 @@ class Engine:
                 msg = f"DoRound failed (result {result}, err {err})"
                 if err != 0:
                     msg += f": {self._rounder.error_string(err)}"
-                raise TauArgusNativeError(msg, code=err)
+                raise SolverError(msg, code=err)
             if not self._tau.set_rounded_response(jj_out, tab):
                 raise BatchError(
                     f"SetRoundedResponse failed for table {tab + 1}")
@@ -1565,7 +1580,7 @@ class Engine:
                 # non-zero rc; re-raise it typed with the native code.
                 m = re.search(r"audit_jj failed \(rc=(-?\d+)\)", str(e))
                 code = int(m.group(1)) if m else 0
-                raise TauArgusNativeError(str(e), code=code) from e
+                raise AuditError(str(e), code=code) from e
 
         by_cell: Dict[int, Tuple[float, float, bool]] = {}
         for r in rows:
