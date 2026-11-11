@@ -31,18 +31,25 @@ notebooks = ["jupyterlab", "nbclient", "nbformat", "ipykernel", "pandas", "pyarr
 # pytauargus-tui package, which itself depends on pytauargus, so the engine
 # stays the base. `pip install "pytauargus[tui]"`.
 tui = ["pytauargus-tui>=0.5.2"]
+# Agent front-end (the `tauargus-mcp` command). Installs the separate
+# pytauargus-mcp package, which itself depends on pytauargus and pulls in
+# the mcp dependency. The base package never imports mcp.
+# `pip install "pytauargus[mcp]"`.
+mcp = ["pytauargus-mcp"]
 
 [project.urls]
 Homepage = "https://github.com/trygu/pytauargus"
 Repository = "https://github.com/trygu/pytauargus"
 Issues = "https://github.com/trygu/pytauargus/issues"
 
-# Same-repo dev: resolve the `tui` extra from the local tui/ package so
-# `uv lock` works before pytauargus-tui exists on PyPI (and so dev venvs
-# follow the in-tree TUI). Published wheels are unaffected — scikit-build
-# only reads [project], so PyPI metadata keeps the plain version range.
+# Same-repo dev: resolve the `tui` and `mcp` extras from the local tui/
+# and mcp/ packages so `uv lock` works before those packages exist on
+# PyPI (and so dev venvs follow the in-tree front-ends). Published wheels
+# are unaffected: scikit-build only reads [project], so PyPI metadata
+# keeps the plain version range.
 [tool.uv.sources]
 pytauargus-tui = { path = "tui" }
+pytauargus-mcp = { path = "mcp" }
 
 [project.scripts]
 tauargus = "pytauargus.cli:main"
