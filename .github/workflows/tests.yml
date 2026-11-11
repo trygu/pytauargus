@@ -96,3 +96,64 @@ jobs:
         # source checkout and the pinned engine checkout, both with test
         # files that would otherwise be collected.
         run: uv run pytest tests -q
+
+  # The MCP front-end is a separate distribution in mcp/; it is released in
+  # lockstep with pytauargus (same version, same py-v* tag), so its suite
+  # runs here on every PR. The mcp project resolves pytauargus from the
+  # parent (editable, [tool.uv.sources] in mcp/pyproject.toml), so it is
+  # tested against this tree, not a PyPI snapshot: a stale pytauargus pin
+  # in mcp/pyproject.toml fails uv sync and the PR goes red. One OS is
+  # enough: the layer under test is pure Python and the native behaviour
+  # is covered by the source suite above.
+  test-mcp:
+    name: Test MCP front-end — Linux x86_64
+    runs-on: ubuntu-24.04
+    env:
+      TAUARGUS_ENGINE_DIR: ${{ github.workspace }}/tauargus-engine
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Read HiGHS pin
+        run: echo "HIGHS_TAG=$(tr -d '[:space:]' < tauargus-engine/engine/HiGHS-VERSION)" >> "$GITHUB_ENV"
+
+      - uses: astral-sh/setup-uv@v5
+
+      # Same cache key as the Linux x86_64 leg of the source job: whichever
+      # job runs first builds HiGHS, the other reuses it.
+      - name: Cache HiGHS
+        id: highs-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/highs-prefix
+          key: highs-ubuntu-24.04-${{ env.HIGHS_TAG }}-static-v4
+
+      - name: Build HiGHS from source
+        if: steps.highs-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$HIGHS_TAG" https://github.com/ERGO-Code/HiGHS.git highs
+          printf '{ global: Highs_*; local: *; };\n' > highs/highs-export.vers
+          cmake -S highs -B highs/build -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF \
+            -DBUILD_CXX_EXE=OFF -DBUILD_SHARED_EXTRAS_LIB=OFF \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/highs-prefix" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,--exclude-libs,libstdc++.a -Wl,--exclude-libs,libsupc++.a -Wl,--exclude-libs,libgcc.a -Wl,--exclude-libs,libgcc_eh.a -Wl,--version-script=$GITHUB_WORKSPACE/highs/highs-export.vers"
+          cmake --build highs/build -j
+          cmake --install highs/build
+
+      - name: Build pinned engine
+        run: |
+          set -euo pipefail
+          HIGHS_CFG="$(dirname "$(find "$RUNNER_TEMP/highs-prefix" -name 'highs-config.cmake' -o -name 'highsConfig.cmake' -o -name 'HighsConfig.cmake' | head -n1)")"
+          cmake -S tauargus-engine/engine -B tauargus-engine/engine/build \
+            -DCMAKE_BUILD_TYPE=Release -DHighs_DIR="$HIGHS_CFG"
+          cmake --build tauargus-engine/engine/build -j
+
+      - name: Run MCP tests
+        working-directory: mcp
+        run: |
+          set -euo pipefail
+          uv sync --extra test
+          uv run pytest tests -q
