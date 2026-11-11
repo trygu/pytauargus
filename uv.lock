@@ -1963,7 +1963,7 @@ provides-extras = ["dataframe", "parquet", "test", "notebooks", "tui", "mcp"]
 
 [[package]]
 name = "pytauargus-mcp"
-version = "0.1.0"
+version = "0.1.0rc1"
 source = { directory = "mcp" }
 dependencies = [
     { name = "mcp" },
