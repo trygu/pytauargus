@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pytauargus-mcp"
+version = "0.1.0"
+description = "Model Context Protocol server for Tau-Argus: the agent front-end over the pytauargus engine"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "EUPL-1.2" }
+keywords = ["statistical disclosure control", "SDC", "MCP", "Model Context Protocol", "agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "pytauargus==0.7.0",
+    "mcp<2",
+]
+
+# Same-repo dev: resolve pytauargus from the parent package (editable)
+# so the MCP front-end follows the in-tree engine instead of a frozen
+# PyPI snapshot.
+# Editable keeps the URL consistent when pytauargus's own lock includes
+# the MCP package via the `mcp` extra (the root project is editable
+# there too).
+# Precondition: the pinned engine checkout's superbuild output
+# (engine/build/lib) must exist (sync-venv.sh builds it if needed).
+# Published wheels are unaffected: hatchling only reads [project], so
+# PyPI metadata keeps the plain version range.
+[tool.uv.sources]
+pytauargus = { path = "..", editable = true }
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/trygu/pytauargus"
+Repository = "https://github.com/trygu/pytauargus"
+Issues = "https://github.com/trygu/pytauargus/issues"
+
+[project.scripts]
+tauargus-mcp = "pytauargus_mcp.server:main"
+# Alias named after the package so `uvx pytauargus-mcp` finds an
+# executable.
+pytauargus-mcp = "pytauargus_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pytauargus_mcp"]
