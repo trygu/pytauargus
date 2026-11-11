@@ -24,7 +24,7 @@ name: Python — Build, installation tests and release
 on:
   workflow_dispatch:
   push:
-    tags: ["py-v*", "py-mcp-v*"]
+    tags: ["py-v*"]
   # PRs get the full build + installed-artifact test report; publishing
   # stays gated on the py-v* tag (the release job's `if`) and the
   # py-mcp-v* tag (the release-mcp job's `if`).
@@ -659,7 +659,6 @@ jobs:
   # ---------------------------------------------------------------------------
   build-tui:
     name: Build TUI wheel
-    if: ${{ !startsWith(github.ref, 'refs/tags/py-mcp-v') }}
     runs-on: ubuntu-24.04
     # The TUI wheel is exercised by the install jobs, which install it
     # together with the pytauargus wheel of THIS run (the TUI declares an
@@ -748,7 +747,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build-mcp:
     name: Build MCP wheel
-    if: ${{ startsWith(github.ref, 'refs/tags/py-mcp-v') }}
+    if: ${{ startsWith(github.ref, 'refs/tags/py-v') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -1301,7 +1300,7 @@ jobs:
 
   release:
     name: Publish tested artifacts
-    needs: [build-macos, build-linux, build-windows, build-tui,
+    needs: [build-macos, build-linux, build-windows, build-tui, build-mcp,
             install-linux-x86_64, install-linux-aarch64,
             install-macos-arm64, install-windows]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/py-v')
@@ -1322,8 +1321,9 @@ jobs:
           merge-multiple: true
 
       # PyPI versions are immutable: refuse to publish if the tag and the
-      # package versions disagree. The TUI is released in lockstep with
-      # pytauargus, so all three must agree.
+      # package versions disagree. The TUI and the MCP server are released
+      # in lockstep with pytauargus (same version, same tag), so all
+      # artifacts must agree.
       - name: Verify the build manifests and tag
         run: |
           set -euo pipefail
@@ -1336,14 +1336,19 @@ jobs:
           entries = [json.loads(m.read_text()) for m in manifests]
           py_manifests = [e for e in entries if e["product"] == "pytauargus"]
           tui_manifests = [e for e in entries if e["product"] == "pytauargus-tui"]
-          if not py_manifests or not tui_manifests:
-              sys.exit("missing pytauargus or pytauargus-tui manifests")
+          mcp_manifests = [e for e in entries if e["product"] == "pytauargus-mcp"]
+          if not py_manifests or not tui_manifests or not mcp_manifests:
+              sys.exit("missing pytauargus, pytauargus-tui or "
+                       "pytauargus-mcp manifests")
           versions = {e["version"] for e in entries}
           if len(versions) != 1:
               sys.exit(f"version mismatch across artifacts: {versions}")
           version = versions.pop()
           tag = os.environ["GITHUB_REF_NAME"].removeprefix("py-v")
-          if tag != version:
+          # rc tags publish PyPI pre-releases (py-v0.7.1-rc1 -> 0.7.1rc1)
+          # and do not burn the final version.
+          tag_version = tag.replace("-rc", "rc")
+          if tag_version != version:
               sys.exit(f"tag py-v{tag} does not match package version {version}")
           engine_shas = {e["engine_sha"] for e in py_manifests if e["engine_sha"]}
           if len(engine_shas) != 1:
@@ -1400,10 +1405,11 @@ jobs:
       - name: Separate wheels for publishing
         run: |
           set -euo pipefail
-          mkdir -p dist-py dist-tui
+          mkdir -p dist-py dist-tui dist-mcp
           mv dist/pytauargus-*.whl dist-py/
           mv dist/pytauargus_tui-*.whl dist-tui/
-          ls -la dist dist-py dist-tui
+          mv dist/pytauargus_mcp-*.whl dist-mcp/
+          ls -la dist dist-py dist-tui dist-mcp
 
       # Downloadable wheels on the GitHub Release page, plus the
       # machine-readable manifest the hashes were verified against.
@@ -1413,10 +1419,13 @@ jobs:
           files: |
             dist-py/*.whl
             dist-tui/*.whl
+            dist-mcp/*.whl
             dist/release-manifest.json
           generate_release_notes: true
 
-      # Optional PyPI publish (trusted publishing or token).
+      # Optional PyPI publish (trusted publishing or token). pytauargus
+      # publishes first: the tui and mcp wheels pin it exactly, and a user
+      # installing either in the publish window needs it on PyPI already.
       - name: Publish pytauargus to PyPI
         if: ${{ vars.PYPI_ENABLED == 'true' }}
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -1429,93 +1438,6 @@ jobs:
         with:
           packages-dir: dist-tui
 
-  # ---------------------------------------------------------------------------
-  # Standalone pytauargus-mcp release on py-mcp-v* tags: GitHub Release
-  # assets and, when enabled, PyPI. The pure-Python wheel has no
-  # platform matrix, so there is no install-test leg yet; the base
-  # pytauargus wheels (which the mcp wheel pins) carry the installed
-  # coverage.
-  # ---------------------------------------------------------------------------
-  release-mcp:
-    name: Release pytauargus-mcp
-    needs: [build-mcp]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/py-mcp-v')
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-      id-token: write
-    steps:
-      # No checkout: this job must publish exactly the artifact that the
-      # build job produced, and a checkout (clean: true) would delete the
-      # downloaded files. All provenance comes from the build manifest.
-      - uses: actions/download-artifact@v4
-        with:
-          name: pytauargus-mcp-wheel
-          path: dist
-
-      # PyPI versions are immutable: refuse to publish if the tag and the
-      # package version disagree. rc tags publish PyPI pre-releases
-      # (py-mcp-v0.1.0-rc1 -> 0.1.0rc1) and do not burn the final version.
-      - name: Verify the build manifest and tag
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import hashlib, json, os, pathlib, sys
-          dist = pathlib.Path("dist")
-          manifests = sorted(dist.glob("manifest-*.json"))
-          if not manifests:
-              sys.exit("no build manifests found")
-          entries = [json.loads(m.read_text()) for m in manifests]
-          entries = [e for e in entries if e["product"] == "pytauargus-mcp"]
-          if not entries:
-              sys.exit("missing pytauargus-mcp manifest")
-          versions = {e["version"] for e in entries}
-          if len(versions) != 1:
-              sys.exit(f"version mismatch across artifacts: {versions}")
-          version = versions.pop()
-          tag = os.environ["GITHUB_REF_NAME"].removeprefix("py-mcp-v")
-          tag_version = tag.replace("-rc", "rc")
-          if tag_version != version:
-              sys.exit(f"tag py-mcp-v{tag} does not match package version {version}")
-          for e in entries:
-              for f in e["files"]:
-                  p = dist / f["name"]
-                  if not p.exists():
-                      sys.exit(f"missing release file: {p}")
-                  data = p.read_bytes()
-                  if not data:
-                      sys.exit(f"empty release file: {p}")
-                  actual = hashlib.sha256(data).hexdigest()
-                  if actual != f["sha256"]:
-                      sys.exit(f"sha256 mismatch for {p}: "
-                               f"{actual} != {f['sha256']}")
-          (dist / "release-manifest.json").write_text(
-              json.dumps({"version": version,
-                          "product_commit": entries[0]["product_commit"],
-                          "artifacts": entries}, indent=2) + "\n")
-          print(json.dumps(entries, indent=2))
-          PY
-
-      # twine uploads everything in its packages dir, so the wheel is
-      # separated from the manifests before publication.
-      - name: Separate wheels for publishing
-        run: |
-          set -euo pipefail
-          mkdir -p dist-mcp
-          mv dist/pytauargus_mcp-*.whl dist-mcp/
-          ls -la dist dist-mcp
-
-      # Downloadable wheel on the GitHub Release page, plus the
-      # machine-readable manifest the hashes were verified against.
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist-mcp/*.whl
-            dist/release-manifest.json
-          generate_release_notes: true
-
-      # Optional PyPI publish (trusted publishing or token).
       - name: Publish pytauargus-mcp to PyPI
         if: ${{ vars.PYPI_ENABLED == 'true' }}
         uses: pypa/gh-action-pypi-publish@release/v1
