@@ -116,6 +116,18 @@ def test_server_has_instructions_with_workflow_and_legend():
         assert code in instructions, f"instructions miss status code {code!r}"
 
 
+def test_server_instructions_guardrail_for_long_solves():
+    """The agent must warn before a long blocking solve, not mid-silence.
+
+    A suppression solve is one blocking call with no progress; the
+    instructions must make the agent announce it and gauge the table
+    size first, with assess as the quick preview.
+    """
+    low = (server.mcp.instructions or "").lower()
+    for needle in ("announce", "long", "cells", "dimension"):
+        assert needle in low, f"instructions miss long-solve guardrail {needle!r}"
+
+
 # ===========================================================================
 # the protection-methods reference resource
 # ===========================================================================

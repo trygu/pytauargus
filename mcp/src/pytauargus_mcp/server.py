@@ -509,7 +509,13 @@ Workflow (consult the statistician as you go):
    contributor counts. Use the plain rule meanings in the result to explain
    in words *why* each sensitive cell is sensitive, before anything is
    withheld.
-5. tauargus_protect to build, suppress and write the tables.
+5. tauargus_protect to build, suppress and write the tables. The
+   suppression solve is one blocking call with no progress in between:
+   announce it before starting, and warn when the table is large or
+   high-dimensional (several hundred cells, three or more dimensions)
+   that it can take a long time. Step 4 is the quick preview: assess
+   runs without the solver and returns fast, so show the statistician
+   what would be flagged before the long call.
 6. tauargus_audit to verify the suppressed cells keep their values from being
    reconstructed.
 7. Report the outcome in plain words using the status legend below. If the
