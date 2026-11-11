@@ -2,16 +2,18 @@
 
 A Model Context Protocol (MCP) server for
 [Tau-Argus](https://github.com/trygu/tauargus-engine), the statistical
-disclosure control engine. It is the agent front-end of the D2.6
-architecture: an LLM or agent (for example OpenCode) drives the stateless
-engine over MCP, one tool call per task, with no server-side session.
-The `.arb` batch file is the state carrier of the batch flow. It is a
-thin wrapper over the `pytauargus` Python API; it re-implements no engine
-behaviour. Installing it also gives you the `pytauargus` package.
+disclosure control engine. It lets an AI assistant (for example
+OpenCode, or any other MCP client) work on your data: you point it at a
+microdata file, it explores the variables, protects the tables and
+reports what was suppressed and why. Each tool call is one
+self-contained task with its full result, so a long solve can be
+backgrounded by the client. It is a thin wrapper over the `pytauargus`
+Python API; it re-implements no engine behaviour. Installing it also
+gives you the `pytauargus` package and the `tauargus` CLI.
 
 ## What it does
 
-This is the first slice: the core loop, six tools.
+Six tools cover the core workflow.
 
 - **`tauargus_version`** reports the `pytauargus` package version and the
   native engine version.
@@ -29,13 +31,7 @@ This is the first slice: the core loop, six tools.
 - **`tauargus_audit`** audits the suppressed cells of a table computed
   by a batch and returns their realised feasibility intervals.
 
-Each tool call carries its inputs and returns a full result, so long
-solves can be backgrounded by the client. The server runs on the stdio
-transport.
-
-Later slices add the expertise layer (MCP prompts for the standard SDC
-procedures, `tauargus://doc/...` resources pointing at the 4.1 manual
-and the D2.6 vision) and the plain-language reporting contract.
+The server runs on the stdio transport.
 
 ## Install
 
@@ -50,9 +46,8 @@ pip install pytauargus-mcp
 pip install "pytauargus[mcp]"
 ```
 
-Installing it also gives you the `pytauargus` package and the
-`tauargus` CLI. To try it without installing anything (requires uv),
-run it with `uvx`:
+To try it without installing anything (requires uv), run it with
+`uvx`:
 
 ```bash
 uvx pytauargus-mcp
