@@ -1,20 +1,32 @@
-"""Consultant-layer tests: method advice, status legend, instructions, resource.
+"""Consultant-layer tests: method advice, assess, legend, instructions.
 
 These encode the agent-front-end intent from ADR 0001 and the 4.1 manual:
 the server is an expert SDC consultant. It articulates the trade-offs of
-the protection methods for a given table, and carries the context (status
-legend, rule grammar, the questions to ask) the agent needs to explain
-*what* and *why* to a non-expert. Pure logic + registration: no native
-solve is required, so these run fast and deterministically.
+the protection methods for a given table, explains what the safety rules
+flag and why (assess, without suppressing), and carries the context
+(status legend, rule grammar, the questions to ask) the agent needs to
+explain *what* and *why* to a non-expert.
+
+The method-advice, legend, instructions and resource tests are pure logic
+plus registration. The assess tests run a native solve on a tiny 4-record
+fixture, so they need the engine of the pinned checkout.
 """
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
 pytest.importorskip("mcp")
 
 from pytauargus_mcp import server  # noqa: E402
+
+# The same small 2 x 2 microdata as test_mcp.py: fast for a single solve.
+MICRO = {
+    "Region": ["Os", "Os", "Ws", "Ws"],
+    "Size": ["1", "2", "1", "2"],
+    "Var2": [10.0, 20.0, 30.0, 40.0],
+}
 
 
 # ===========================================================================
@@ -97,7 +109,7 @@ def test_server_has_instructions_with_workflow_and_legend():
     assert instructions, "server must carry agent-facing instructions"
     low = instructions.lower()
     # the consultant workflow and the questions to ask
-    for needle in ("explore", "protect", "audit"):
+    for needle in ("explore", "assess", "protect", "audit"):
         assert needle in low, f"instructions miss workflow step {needle!r}"
     # the plain-language status legend
     for code in ("U", "M", "S"):
@@ -112,3 +124,83 @@ def test_protection_methods_resource_registered():
     resources = asyncio.run(server.mcp.list_resources())
     uris = {str(r.uri) for r in resources}
     assert "tauargus://doc/protection-methods" in uris
+
+
+# ===========================================================================
+# rule meanings: the plain words for the safety-rule grammar
+# ===========================================================================
+
+def test_rule_meanings_split_compound_rules():
+    out = server.rule_meanings("P(25,1)|FREQ(3,20)|ZERO(10)")
+    assert [r["rule"] for r in out] == ["P(25,1)", "FREQ(3,20)", "ZERO(10)"]
+    for r in out:
+        assert r["meaning"]
+
+
+def test_rule_meanings_p_rule_cites_threshold_and_contributors():
+    out = {r["rule"]: r["meaning"] for r in server.rule_meanings("P(25,1)")}
+    m = out["P(25,1)"].lower()
+    assert "25" in m and "largest" in m
+
+
+def test_rule_meanings_unknown_token_is_honest():
+    out = server.rule_meanings("FROB(1)")
+    assert len(out) == 1
+    assert "4.1" in out[0]["meaning"]
+
+
+# ===========================================================================
+# tauargus_assess: run the safety rules without suppressing (the "why")
+# ===========================================================================
+
+def test_assess_flags_sensitive_cells_without_suppressing(tmp_path):
+    out = server.assess_table(MICRO, ["Region", "Size"], "Var2",
+                              safety_rules="P(25,1)", workdir=str(tmp_path))
+    assert out["n_tables"] == 1
+    t = out["tables"][0]
+    assert t["n_cells"] == 9
+    assert t["status_counts"].get("U", 0) >= 1
+    # no suppression ran: no secondary cells can exist
+    assert t["status_counts"].get("M", 0) == 0
+    assert len(t["sensitive_cells"]) >= 1
+    for c in t["sensitive_cells"]:
+        assert set(c) >= {"cell", "dims", "value", "freq", "status"}
+        assert c["value"] is not None  # assess withholds nothing
+    assert out["status_legend"]["U"]
+    assert {r["rule"] for r in out["rules"]} == {"P(25,1)"}
+
+
+def test_assess_publishes_the_raw_values(tmp_path):
+    out = server.assess_table(MICRO, ["Region", "Size"], "Var2",
+                              workdir=str(tmp_path))
+    t = out["tables"][0]
+    by = {(c["dims"]["Region"], c["dims"]["Size"]): c["value"]
+          for c in t["sensitive_cells"]}
+    # single-record cells keep exactly their record's value
+    assert by[("Os", "1")] == 10.0
+    assert by[("Ws", "2")] == 40.0
+
+
+def test_assess_batch_has_no_suppression_step(tmp_path):
+    out = server.assess_table(MICRO, ["Region", "Size"], "Var2",
+                              workdir=str(tmp_path))
+    arb = Path(out["files"]["arb"])
+    assert arb.is_file()
+    assert "<SUPPRESS>" not in arb.read_text()
+
+
+def test_assess_sensitive_cells_carry_the_contributor_count(tmp_path):
+    out = server.assess_table(MICRO, ["Region", "Size"], "Var2",
+                              workdir=str(tmp_path))
+    t = out["tables"][0]
+    by = {(c["dims"]["Region"], c["dims"]["Size"]): c["freq"]
+          for c in t["sensitive_cells"]}
+    assert by[("Os", "1")] == 1  # one record in that cell
+
+
+def test_assess_no_rules_flags_nothing(tmp_path):
+    out = server.assess_table(MICRO, ["Region", "Size"], "Var2",
+                              safety_rules="", workdir=str(tmp_path))
+    t = out["tables"][0]
+    assert t["status_counts"].get("U", 0) == 0
+    assert t["sensitive_cells"] == []

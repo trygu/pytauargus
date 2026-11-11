@@ -225,8 +225,8 @@ def test_server_constructs_with_tools():
     tools = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert tools == {"tauargus_version", "tauargus_explore",
                      "tauargus_build_arb", "tauargus_run_arb",
-                     "tauargus_protect", "tauargus_audit",
-                     "tauargus_method_advice"}
+                     "tauargus_protect", "tauargus_assess",
+                     "tauargus_audit", "tauargus_method_advice"}
     assert callable(server.main)
 
 

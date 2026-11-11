@@ -13,6 +13,7 @@ is the only place that imports ``mcp``. Start the server with the
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -178,6 +179,96 @@ def protect_tables(microdata: Union[str, Dict[str, List[Any]]],
             "status_legend": status_legend()}
 
 
+def assess_table(microdata: Union[str, Dict[str, List[Any]]],
+                 tables: list, response: str,
+                 safety_rules: str = "P(25,1)",
+                 workdir: Optional[str] = None) -> Dict[str, Any]:
+    """Run the safety rules without suppressing: what is sensitive, and why.
+
+    Builds the same ``<SPECIFYTABLE>`` + ``<SAFETYRULE>`` blocks as
+    :func:`protect_tables` but no ``<SUPPRESS>`` step, so the engine
+    classifies every cell and withholds nothing. Returns, per table, the
+    cells the rules flag (``U`` primary sensitive, ``E`` empty) with their
+    value and contributor count (``freq``), the applied rules explained in
+    plain words (see :func:`rule_meanings`), and the status legend. The
+    generated batch (``files["arb"]``) is kept for inspection.
+    """
+    import tempfile
+
+    from pytauargus.dataframe import to_microdata
+    from pytauargus.micro import micro_asc_rda
+    from pytauargus.arb import specif_safety
+    from pytauargus.engine import run_batch
+    from pytauargus.result import TableResult
+
+    if isinstance(microdata, str):
+        mp = Path(microdata)
+        if not mp.is_file():
+            raise FileNotFoundError(f"microdata file not found: {mp}")
+    micro = to_microdata(microdata)
+    if all(isinstance(t, str) for t in tables):
+        tab_specs = [list(tables)]
+    else:
+        tab_specs = [list(t) for t in tables]
+    n = len(tab_specs)
+
+    if workdir is None:
+        workdir = tempfile.mkdtemp(prefix="tauargus_assess_")
+    wd = Path(workdir).resolve()
+    wd.mkdir(parents=True, exist_ok=True)
+    asc = str(wd / "micro.asc")
+    rda = str(wd / "micro.rda")
+    arb = str(wd / "assess.arb")
+    micro_asc_rda(micro, asc_filename=asc, rda_filename=rda)
+    output_names = [str(wd / f"tab{i + 1}.tab") for i in range(n)]
+
+    sr = "" if safety_rules is None else safety_rules
+    rules = [sr] if isinstance(sr, str) else list(sr)
+
+    lines = ['<OPENMICRODATA> "%s"' % asc,
+             '<OPENMETADATA> "%s"' % rda]
+    lines += specif_safety(tab_specs, [response], None, None, rules, [False])
+    lines.append("<READMICRODATA>")
+    for i, out in enumerate(output_names, 1):
+        lines.append('<WRITETABLE> (%d,5,SO+,"%s")' % (i, out))
+    Path(arb).write_text("\n".join(lines) + "\n")
+
+    run_batch(arb)
+
+    files = {"asc": asc, "rda": rda, "arb": arb}
+    out_tables: List[Dict[str, Any]] = []
+    for i, out in enumerate(output_names):
+        files[f"tab{i + 1}"] = out
+        t = TableResult(path=out, exp_vars=tab_specs[i],
+                        response=response, is_freq=False)
+        rows = t.rows
+        statuses = t.status()
+        status_counts: Dict[str, int] = {}
+        for s in statuses:
+            status_counts[s] = status_counts.get(s, 0) + 1
+        sensitive: List[Dict[str, Any]] = []
+        for idx, row in enumerate(rows):
+            if statuses[idx] in ("U", "E"):
+                sensitive.append({
+                    "cell": idx,
+                    "dims": {dim: row[dim] for dim in t._exp},
+                    "value": row[response],
+                    "freq": row["freq"],
+                    "status": statuses[idx],
+                })
+        out_tables.append({
+            "n_cells": t.n_cells,
+            "status_counts": status_counts,
+            "sensitive_cells": sensitive,
+            "columns": t.columns,
+            "path": out,
+        })
+    return {"workdir": str(wd), "files": files,
+            "n_tables": n, "tables": out_tables,
+            "rules": rule_meanings(rules),
+            "status_legend": status_legend()}
+
+
 def audit_table(arb_path: str, tab: int = 0) -> Dict[str, Any]:
     """Audit a suppressed table of a batch (wraps :meth:`Engine.audit`).
 
@@ -215,6 +306,78 @@ _STATUS_LEGEND = {
 def status_legend() -> Dict[str, str]:
     """Plain words for the numeric cell status codes (S, U, M, P, E)."""
     return dict(_STATUS_LEGEND)
+
+
+def rule_meanings(safety_rules: Union[str, List[str]]) -> List[Dict[str, str]]:
+    """Plain words for the safety rules (from the 4.1 manual).
+
+    ``safety_rules`` is one rule string or a per-table list; a rule string
+    may join several rules with ``|`` (e.g. ``"P(25,1)|FREQ(3,20)"``).
+    Each distinct token comes back as ``{"rule", "meaning"}``; a token
+    without a known meaning says so instead of guessing.
+    """
+    per_table = [safety_rules] if isinstance(safety_rules, str) else list(safety_rules)
+    out: List[Dict[str, str]] = []
+    seen = set()
+    for rules in per_table:
+        for token in (r.strip() for r in rules.split("|")):
+            if token and token not in seen:
+                seen.add(token)
+                out.append({"rule": token,
+                            "meaning": _rule_meaning(token)})
+    return out
+
+
+def _rule_meaning(token: str) -> str:
+    """Plain words for one rule token, grounded in the 4.1 manual."""
+    m = re.match(r"^([A-Za-z]+)\s*\((.*)\)$", token)
+    if not m:
+        return "no plain description; see the 4.1 manual"
+    name = m.group(1).upper()
+    args = [a.strip() for a in m.group(2).split(",")]
+
+    def arg(i: int) -> str:
+        return args[i] if i < len(args) else "?"
+
+    if name == "P":
+        try:
+            n_in = int(arg(1))
+        except ValueError:
+            n_in = 1
+        return ("p%% dominance rule: a cell is sensitive when the largest "
+                "contribution dominates it. The cell passes only if the "
+                "total of all but the %d largest contributors is at least "
+                "%s%% of the largest contribution (n = %d intruder%s in "
+                "the coalition)." % (n_in + 1, arg(0), n_in,
+                                     "" if n_in == 1 else "s"))
+    if name == "NK":
+        return ("dominance rule: a cell is sensitive when the %s largest "
+                "contributors together account for more than %s%% of the "
+                "cell total." % (arg(0), arg(1)))
+    if name == "FREQ":
+        return ("minimum frequency: a cell is sensitive when fewer than %s "
+                "respondents contribute to it." % arg(0))
+    if name == "ZERO":
+        return "zero rule: cells whose value is zero are sensitive."
+    if name == "REQ":
+        return ("request rule: a cell is sensitive when a respondent who "
+                "asked to be protected holds one of the configured shares "
+                "(%s%% or %s%%) of it." % (arg(0), arg(1)))
+    if name == "MAN":
+        return ("manual rule: cells marked unsafe in the input data are "
+                "protected with a %s%% safety margin." % arg(0))
+    if name == "WGT":
+        if arg(0) == "1":
+            return ("weighting: contributions are summed with the weight "
+                    "variable.")
+        return "weighting: contributions are summed as recorded (no weights)."
+    if name == "MIS":
+        if arg(0) == "1":
+            return ("missing values: a cell is treated as safe when its "
+                    "spanning code is a declared missing value.")
+        return "missing values: the ordinary rules apply to cells with " \
+               "missing codes."
+    return "no plain description in the 4.1 manual; check the batch reference."
 
 
 # The protection methods of the 4.1 manual, with their trade-offs. ``applies``
@@ -341,10 +504,15 @@ Workflow (consult the statistician as you go):
    methods apply, their pros and cons, and the recommendation. Read
    tauargus://doc/protection-methods for the full discussion. Explain the
    trade-off in plain words and confirm the choice.
-4. tauargus_protect to build, suppress and write the tables.
-5. tauargus_audit to verify the suppressed cells keep their values from being
+4. tauargus_assess (the same table and safety rules, but no suppression) to
+   see exactly which cells the rules flag and with what values and
+   contributor counts. Use the plain rule meanings in the result to explain
+   in words *why* each sensitive cell is sensitive, before anything is
+   withheld.
+5. tauargus_protect to build, suppress and write the tables.
+6. tauargus_audit to verify the suppressed cells keep their values from being
    reconstructed.
-6. Report the outcome in plain words using the status legend below. If the
+7. Report the outcome in plain words using the status legend below. If the
    audit shows a value can still be reconstructed, hold and flag it rather
    than present a leaking table as safe.
 
@@ -521,6 +689,23 @@ def tauargus_protect(microdata: Union[str, Dict[str, List[Any]]],
     return protect_tables(microdata, tables, response,
                           safety_rules=safety_rules, suppress=suppress,
                           workdir=workdir)
+
+
+@mcp.tool()
+def tauargus_assess(microdata: Union[str, Dict[str, List[Any]]],
+                    tables: list, response: str,
+                    safety_rules: str = "P(25,1)",
+                    workdir: Optional[str] = None) -> Dict[str, Any]:
+    """Run the safety rules without suppressing: what is sensitive, and why.
+
+    Same inputs as tauargus_protect except the suppression spec. Returns,
+    per table, the cells the rules flag (``U`` sensitive, ``E`` empty) with
+    their value and contributor count, the applied rules explained in plain
+    words, and the status legend. Nothing is withheld, so the statistician
+    sees exactly what a protection would act on before it happens.
+    """
+    return assess_table(microdata, tables, response,
+                        safety_rules=safety_rules, workdir=workdir)
 
 
 @mcp.tool()
