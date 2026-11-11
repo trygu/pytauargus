@@ -167,7 +167,13 @@ def _run_protect_subprocess(micro, tables, response, suppress, cwd=None, **kwarg
         "        assert len(cell[i]) == max(1, topn)\n"
         "    assert cell[11][0] == 40\n"
         "assert res.engine._tau.get_table_cell(0, [0]) == (False,)\n"
-        "assert res.engine._tau.get_table_cell(-1, [0, 0]) == (False,)\n"
+        # 0.7.0 engine contract (input guards): an out-of-range tab index
+        # raises ValueError instead of the legacy soft (False,) return.
+        "try:\n"
+        "    res.engine._tau.get_table_cell(-1, [0, 0])\n"
+        "    raise AssertionError('tab=-1 was accepted')\n"
+        "except ValueError:\n"
+        "    pass\n"
         "out = {\n"
         "  'n_tables': len(res.tables),\n"
         "  'files': res.files,\n"
