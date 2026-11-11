@@ -102,9 +102,9 @@ class TestCoverSolveContract:
         assert e._protect_cover_table is True
         assert e._n_tables == 1
         assert e._is_table
-        ncell, _ = e._tau.get_total_table_size(0)
+        _, ncell, _ = e._tau.get_total_table_size(0)
         assert ncell > 0
-        total = e._tau.get_table_cell_value(0, 0)
+        _, total = e._tau.get_table_cell_value(0, 0)
         assert total == total  # not NaN
 
     def test_clear_resets_cover_flag(self, cover_fixtures):

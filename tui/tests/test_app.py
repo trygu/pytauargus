@@ -241,8 +241,11 @@ async def test_second_opt_preview_surfaces_5008(app):
         assert app.preview is None and app.pending is None
         assert app.busy is False
         # The error carries the exception class and is styled as an
-        # error in the status line (not a plain log message).
-        assert "BatchError" in app.log_text
+        # error in the status line (not a plain log message). Since the
+        # 0.7.0 error contract the native failure is a typed
+        # TauArgusNativeError (BatchError subclass) with the catalog text.
+        assert "TauArgusNativeError" in app.log_text
+        assert "Couldn't load JJ-routines" in app.log_text
         logtext = app.query_one("#logtext", Static)
         assert "error" in logtext.classes
         # The next ordinary log clears the error styling.

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,6 +48,34 @@ from .batch import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class TauArgusNativeError(BatchError):
+    """A native engine call failed.
+
+    Carries the native error code in ``code`` (0 when the call reports
+    none). When a code is reported, the message includes the catalog
+    text for that code (via the producing object's ``error_string``).
+    """
+
+    def __init__(self, message: str, code: int = 0):
+        super().__init__(message)
+        self.code = code
+
+
+class SolverError(TauArgusNativeError):
+    """A solver call failed (HiTaS suppression, rounder).
+
+    Distinct from core-engine failures for the CLI exit-code contract:
+    ``main`` maps it to exit 4 (exit 3 for plain engine failures).
+    """
+
+
+class AuditError(TauArgusNativeError):
+    """The CSP realized-interval audit failed.
+
+    Distinct for the CLI exit-code contract: ``main`` maps it to exit 5.
+    """
 
 
 # WriteCSV/WriteCSVTable index into DimSequence[d] for each table dimension.
@@ -706,7 +735,9 @@ class Engine:
 
         self._tau.clean_all()
         self._tau.set_in_file_info(True, "")
-        self._tau.set_number_var(len(meta.variables))
+        if not self._tau.set_number_var(len(meta.variables)):
+            raise BatchError(
+                f"SetNumberVar failed for {len(meta.variables)} variables")
 
         for var in meta.variables:
             self._set_variable(var)
@@ -718,7 +749,7 @@ class Engine:
 
     def _set_variable(self, var: Variable) -> None:
         n_miss = var.n_missings()
-        self._tau.set_variable(
+        if not self._tau.set_variable(
             index=var.index,
             b_pos=var.b_pos,
             n_pos=var.var_len,
@@ -736,10 +767,16 @@ class Engine:
             is_hierarchical=var.hierarchical != 0,
             is_holding=var.is_holding,
             is_record_key=var.is_record_key,
-        )
+        ):
+            raise BatchError(f"SetVariable failed for variable {var.name}")
         if var.hierarchical == 2:  # HIER_FILE
             hier_path = self._resolve_path(var.hier_file_name)
-            self._tau.set_hierarchical_codelist(var.index, str(hier_path), var.leading_string)
+            rc = self._tau.set_hierarchical_codelist(
+                var.index, str(hier_path), var.leading_string)
+            if rc != 1:  # 1 = success; HC_* codes (>= 1500) = failure
+                raise BatchError(
+                    f"SetHierarchicalCodelist failed for variable {var.name} "
+                    f"file={var.hier_file_name}: {self._tau.error_string(rc)}")
         elif var.hierarchical == 1:  # HIER_LEVELS
             # Trim trailing zero levels (Java counts up to the last non-zero).
             levels = var.hier_levels
@@ -774,7 +811,8 @@ class Engine:
     def _finalize_tables(self) -> None:
         """Call native SetTable + SetTableSafety for each registered table."""
         self._n_tables = len(self._tables)
-        self._tau.set_number_tab(self._n_tables)
+        if not self._tau.set_number_tab(self._n_tables):
+            raise BatchError(f"SetNumberTab failed for {self._n_tables} tables")
         for i, (spec, srs) in enumerate(self._tables):
             self._call_set_table(i, spec)
             self._call_set_table_safety(i, srs)
@@ -894,7 +932,9 @@ class Engine:
         """
         self._tau.clean_all()
         self._tau.set_in_file_info(False, meta.field_separator)
-        self._tau.set_number_var(len(meta.variables))
+        if not self._tau.set_number_var(len(meta.variables)):
+            raise BatchError(
+                f"SetNumberVar failed for {len(meta.variables)} variables")
 
         self._compute_var_lengths(meta)
 
@@ -904,7 +944,8 @@ class Engine:
         # Mark that tables are given directly rather than computed from micro
         # data (Java: ThroughTable → m_UsingMicroData = false).
         self._tau.through_table()
-        self._tau.set_number_tab(len(self._tables))
+        if not self._tau.set_number_tab(len(self._tables)):
+            raise BatchError(f"SetNumberTab failed for {len(self._tables)} tables")
 
     def read_table(self, additivity: int = 0, keep_status: bool = False) -> None:
         """Read a tabular table: port of ``TableSet.read`` (3-phase flow).
@@ -1224,23 +1265,26 @@ class Engine:
     def _set_in_table(self, idx: int, cell: dict) -> None:
         """Fill one cell (codes already normalised by ``_build_cell``)."""
         codes = cell["codes"]
-        ok = self._tau.set_in_table(
+        ok, err, ev = self._tau.set_in_table(
             index=idx, codes=codes, shadow=cell["shadow"], cost=cell["cost"],
             response=cell["response"], freq=cell["freq"],
             max_score_cell=cell["max_score"], max_score_holding=[],
             status=cell["status"], lpl=cell["lower"], upl=cell["upper"])
         if not ok:
-            raise BatchError(
-                f"SetInTable failed for table {idx + 1}: codes={codes}")
+            msg = f"SetInTable failed for table {idx + 1}: codes={codes}"
+            if err != 0:
+                msg += f" (code {err}): {self._tau.error_string(err)}"
+            raise TauArgusNativeError(msg, code=err)
 
     def _backup_cell_statuses(self, idx: int):
-        ncell, _ = self._tau.get_total_table_size(idx)
+        _, ncell, _ = self._tau.get_total_table_size(idx)
         statuses = []
         lpls = []
         upls = []
         for nc in range(ncell):
-            statuses.append(self._tau.get_table_cell_status(idx, nc))
-            l, u = self._tau.get_table_cell_protection_levels(idx, nc)
+            _, st = self._tau.get_table_cell_status(idx, nc)
+            statuses.append(st)
+            _, l, u = self._tau.get_table_cell_protection_levels(idx, nc)
             lpls.append(l)
             upls.append(u)
         return statuses, lpls, upls
@@ -1250,8 +1294,13 @@ class Engine:
         for nc, st in enumerate(statuses):
             if st in (CS_UNKNOWN, CS_EMPTY, 13):  # UNKNOWN/EMPTY/EMPTY_NONSTRUCT
                 continue
-            self._tau.set_table_cell_status_cell(idx, nc, st)
-            self._tau.set_table_cell_protection_levels(idx, nc, lpls[nc], upls[nc])
+            if not self._tau.set_table_cell_status_cell(idx, nc, st):
+                raise BatchError(
+                    f"Restoring cell status failed for table {idx} cell {nc}")
+            if not self._tau.set_table_cell_protection_levels(
+                    idx, nc, lpls[nc], upls[nc]):
+                raise BatchError(
+                    f"Restoring protection levels failed for table {idx} cell {nc}")
 
     def _call_set_table_safety_info(self, idx: int, srs: SafetyRuleSet) -> None:
         """Port of the Java ``SetTableSafetyInfo`` call for a tabular table."""
@@ -1275,7 +1324,7 @@ class Engine:
         # useStatusOnly: no (non-MAN) safety rule → status is used directly.
         has_status = not (srs.dom_rule or srs.pq_rule or srs.min_freq
                           or srs.zero_rule or srs.apply_weight or srs.apply_peep)
-        ok = self._tau.set_table_safety_info(
+        ok, errc = self._tau.set_table_safety_info(
             index=idx,
             has_max_score=has_max_score,
             dominance_rule=srs.dom_rule,
@@ -1294,7 +1343,10 @@ class Engine:
             ns_empty_safety_range=10,
         )
         if not ok:
-            raise BatchError(f"SetTableSafetyInfo failed for table {idx + 1}")
+            msg = f"SetTableSafetyInfo failed for table {idx + 1}"
+            if errc != 0:
+                msg += f" (code {errc}): {self._tau.error_string(errc)}"
+            raise TauArgusNativeError(msg, code=errc)
 
     # -- suppress ------------------------------------------------------------
     def suppress(self, cmd: Suppress) -> None:
@@ -1317,11 +1369,11 @@ class Engine:
     def _table_cell_bounds(self, tab: int) -> Tuple[float, float]:
         """Return (min, max) finite cell value of ``tab`` (Java minTabVal/maxTabVal)."""
         tau = self._tau
-        n, _ = tau.get_total_table_size(tab)
+        _, n, _ = tau.get_total_table_size(tab)
         lo = None
         hi = None
         for i in range(n):
-            v = tau.get_table_cell_value(tab, i)
+            _, v = tau.get_table_cell_value(tab, i)
             if v != v:  # NaN
                 continue
             if lo is None or v < lo:
@@ -1362,7 +1414,8 @@ class Engine:
                 do_count_bounds=cmd.mod_min_freq,
             )
             if ok > 0:
-                raise BatchError(f"AHiTaS failed: {self._hitas.error_string(ok)}")
+                raise SolverError(
+                    f"AHiTaS failed: {self._hitas.error_string(ok)}", code=ok)
             ok2, n = self._tau.set_secondary_hitas(tab)
             if not ok2:
                 raise BatchError(f"SetSecondaryHITAS failed for table {tab + 1}")
@@ -1381,7 +1434,9 @@ class Engine:
                 in_file_jj=jj_in, out_file=jj_out, max_time=cmd.opt_max_time
             )
             if res > 1:
-                raise BatchError(f"FullJJ failed (code {res}): {self._hitas.error_string(res)}")
+                raise SolverError(
+                    f"FullJJ failed (code {res}): {self._hitas.error_string(res)}",
+                    code=res)
             # Append " m" to every line of JJ.OUT (secondary-marker form) -> JJ2.OUT
             with open(jj_out, encoding="utf-8", errors="replace") as fin, \
                  open(jj2, "w", encoding="utf-8") as fout:
@@ -1391,8 +1446,9 @@ class Engine:
                     fout.write(line.rstrip("\n") + " m\n")
             code, n = self._tau.set_secondary_jjformat(tab, jj2, False)
             if code != 1:
-                raise BatchError(
-                    f"SetSecondaryJJFormat failed (code {code})")
+                raise TauArgusNativeError(
+                    f"SetSecondaryJJFormat failed (code {code}): "
+                    f"{self._tau.error_string(code)}", code=code)
             logger.info("OPT suppress: %d cells set secondary.", n)
 
     def _correct_round_jj(self, path: str, base: int, no_partitions: bool,
@@ -1459,7 +1515,10 @@ class Engine:
                 max_time=cmd.rnd_time,
             )
             if result > 0:
-                raise BatchError(f"DoRound failed (result {result}, err {err})")
+                msg = f"DoRound failed (result {result}, err {err})"
+                if err != 0:
+                    msg += f": {self._rounder.error_string(err)}"
+                raise SolverError(msg, code=err)
             if not self._tau.set_rounded_response(jj_out, tab):
                 raise BatchError(
                     f"SetRoundedResponse failed for table {tab + 1}")
@@ -1514,7 +1573,14 @@ class Engine:
             jj = os.path.join(tmp, "Anneke.JJ")
             if not self._tau.write_jj_format(tab, jj, lo, hi, False, False, False):
                 raise BatchError("WriteJJFormat failed for AUDIT")
-            rows = audit_jj(jj)
+            try:
+                rows = audit_jj(jj)
+            except RuntimeError as e:
+                # The binding raises "audit_jj failed (rc=N): <file>" on a
+                # non-zero rc; re-raise it typed with the native code.
+                m = re.search(r"audit_jj failed \(rc=(-?\d+)\)", str(e))
+                code = int(m.group(1)) if m else 0
+                raise AuditError(str(e), code=code) from e
 
         by_cell: Dict[int, Tuple[float, float, bool]] = {}
         for r in rows:
@@ -1585,13 +1651,16 @@ class Engine:
 
     def _recode_truncate(self, var_idx: int, max_level: int) -> None:
         """Deactivate every node at ``max_level`` that has children, then recode."""
-        self._tau.undo_recode(var_idx)
-        n_codes, _ = self._tau.get_var_number_of_codes(var_idx)
+        if not self._tau.undo_recode(var_idx):
+            raise BatchError(f"UndoRecode failed for variable {var_idx}")
+        _, n_codes, _ = self._tau.get_var_number_of_codes(var_idx)
         closed = 0
         for i in range(n_codes):
             ok, _, _, _, level, n_child, _ = self._tau.get_var_code_properties(var_idx, i)
             if ok and level == max_level and n_child > 0:
-                self._tau.set_var_code_active(var_idx, i, False)
+                if not self._tau.set_var_code_active(var_idx, i, False):
+                    raise BatchError(
+                        f"SetVarCodeActive failed for variable {var_idx} code {i}")
                 closed += 1
         if closed > 0:
             if not self._tau.do_active_recode(var_idx):
@@ -1602,9 +1671,10 @@ class Engine:
 
     def _recode_tree(self, var_idx: int, path: Path) -> None:
         """Deactivate the parent codes listed in a <TREERECODE> file, then recode."""
-        self._tau.undo_recode(var_idx)
+        if not self._tau.undo_recode(var_idx):
+            raise BatchError(f"UndoRecode failed for variable {var_idx}")
         # Build code-string -> code-index lookup.
-        n_codes, _ = self._tau.get_var_number_of_codes(var_idx)
+        _, n_codes, _ = self._tau.get_var_number_of_codes(var_idx)
         index_by_code: Dict[str, int] = {}
         for i in range(n_codes):
             ok, _, cs, _, _ = self._tau.get_var_code(var_idx, i)
@@ -1618,7 +1688,9 @@ class Engine:
             ci = index_by_code.get(code)
             if ci is None:
                 raise BatchError(f"Code ({code}) not found")
-            self._tau.set_var_code_active(var_idx, ci, False)
+            if not self._tau.set_var_code_active(var_idx, ci, False):
+                raise BatchError(
+                    f"SetVarCodeActive failed for variable {var_idx} code {ci}")
             closed += 1
         if closed > 0:
             if not self._tau.do_active_recode(var_idx):
@@ -1677,7 +1749,7 @@ class Engine:
         # Per-dim active-code counts (== native SizeDim after recode).
         max_dim = []
         for vi in exp_vars:
-            n_codes, n_active = tau.get_var_number_of_codes(vi)
+            _, n_codes, n_active = tau.get_var_number_of_codes(vi)
             max_dim.append(n_active)
 
         # Pre-compute code strings for each (var, code_idx) to avoid repeated
@@ -1971,7 +2043,7 @@ class Engine:
         code_index: List[Dict[str, int]] = []
         max_dim: List[int] = []
         for vi in exp_vars:
-            n_codes, n_active = tau.get_var_number_of_codes(vi)
+            _, n_codes, n_active = tau.get_var_number_of_codes(vi)
             max_dim.append(n_active)
             var = meta.variables[vi]
             arr: List[str] = []
@@ -2138,10 +2210,7 @@ class Engine:
                                new_status: int, tau,
                                stats: Dict[str, int]) -> None:
         """Apply a single apriori change to one cell (APriori.ProcessOneVarCode)."""
-        try:
-            res = tau.get_table_cell(tab, list(dim), 0)
-        except Exception:
-            return
+        res = tau.get_table_cell(tab, list(dim), 0)
         if not res or not res[0]:
             return
         old_status = res[10]
@@ -2149,7 +2218,10 @@ class Engine:
             return  # "met status EMPTY mag niks gebeuren"
 
         if ap_type in ("C", "W"):  # change cost
-            cost = x1 if x1 > 0 else 1.0
+            # Legacy: x1 <= 0 → 1 ("zero is a silly value"). Extend the same
+            # default to non-finite values, which the legacy comparison let
+            # through (NaN <= 0 and NaN > 0 are both False, Inf > 0 is True).
+            cost = x1 if math.isfinite(x1) and x1 > 0 else 1.0
             if tau.set_table_cell_cost(tab, list(dim), cost):
                 stats["cost_ok"] += 1
             else:
@@ -2157,7 +2229,11 @@ class Engine:
             return
 
         if ap_type == _AP_ADJUST_PROT_LEVEL or ap_type == "PL":
-            if x1 < 0 or x2 < 0:
+            # Legacy: x1 < 0 or x2 < 0 → "Illegal values for the protection
+            # levels". Extend to non-finite values, which the legacy
+            # comparison let through (NaN < 0 is False, Inf < 0 is False).
+            if (not math.isfinite(x1) or not math.isfinite(x2)
+                    or x1 < 0 or x2 < 0):
                 stats["protlevel_err"] += 1
                 return
             if not (CS_UNSAFE_RULE <= old_status <= CS_UNSAFE_MANUAL):

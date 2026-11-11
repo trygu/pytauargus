@@ -64,19 +64,19 @@ def _expect_raw_csv(eng, tab, out: Path):
     rows = _read_rows(out)
     grid = _cell_grid(rows)
 
-    ncell, _ = eng._tau.get_total_table_size(tab)
+    _, ncell, _ = eng._tau.get_total_table_size(tab)
     ncol = len(grid[0])
     assert len(grid) * ncol == ncell, "CSV grid shape != table size"
 
     for r in range(len(grid)):
         for c in range(ncol):
             i = _linear_index(r, c, ncol)
-            status = eng._tau.get_table_cell_status(tab, i)
+            _, status = eng._tau.get_table_cell_status(tab, i)
             cell = grid[r][c]
             if status == CS_EMPTY:
                 assert cell == "-", f"cell {i}: expected '-', got {cell!r}"
             elif status in NUMERIC_STATUSES:
-                expected = eng._tau.get_table_cell_value(tab, i)
+                _, expected = eng._tau.get_table_cell_value(tab, i)
                 assert cell not in ("", "-", "x"), f"cell {i}: empty raw value"
                 # The native writer prints nDec decimals, so compare with a
                 # small relative tolerance rather than exact equality.
@@ -95,7 +95,7 @@ def _expect_rounded_csv(eng, tab, base, out: Path):
     rows = _read_rows(out)
     grid = _cell_grid(rows)
 
-    ncell, _ = eng._tau.get_total_table_size(tab)
+    _, ncell, _ = eng._tau.get_total_table_size(tab)
     ncol = len(grid[0])
     assert len(grid) * ncol == ncell, "CSV grid shape != table size"
     for r in range(len(grid)):

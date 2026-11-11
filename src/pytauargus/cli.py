@@ -52,7 +52,14 @@ from .batch import (
     Tokenizer,
     parse_batch,
 )
-from .engine import IDENTITY_DIM_SEQUENCE, Engine, parse_rda, run_batch
+from .engine import (
+    IDENTITY_DIM_SEQUENCE,
+    Engine,
+    AuditError,
+    SolverError,
+    parse_rda,
+    run_batch,
+)
 from .protect import protect
 
 
@@ -246,7 +253,7 @@ def cmd_compute(args) -> int:
     arb = Path(args.batch)
     eng = run_batch(arb)
     for i in range(eng._n_tables):
-        ncell, _ = eng._tau.get_total_table_size(i)
+        _, ncell, _ = eng._tau.get_total_table_size(i)
         print(f"table {i + 1}: {ncell} cells")
     return 0
 
@@ -334,10 +341,13 @@ def cmd_save(args) -> int:
         else:  # default: <data_stem>_table<n>.{csv|tab} next to the data file
             fpath = _default_out_name(eng, i, default_suffix)
         if args.format == "csv":
-            eng._tau.write_csv(i, str(fpath), True, IDENTITY_DIM_SEQUENCE, 1)
+            if not eng._tau.write_csv(i, str(fpath), True, IDENTITY_DIM_SEQUENCE, 1):
+                raise BatchError(f"Could not write table {i + 1} to {fpath}")
         elif args.format == "cell":
-            eng._tau.write_cell_records(
-                i, str(fpath), False, args.status, False, "", args.unsafe, True, 1)
+            if not eng._tau.write_cell_records(
+                    i, str(fpath), False, args.status, False, "", args.unsafe,
+                    True, 1):
+                raise BatchError(f"Could not write table {i + 1} to {fpath}")
         elif args.format == "intermediate":
             eng.write_intermediate_table(i, str(fpath), with_audit=args.audit)
         else:
@@ -351,8 +361,8 @@ def cmd_tables(args) -> int:
     arb = Path(args.batch)
     eng = run_batch(arb)
     for i in range(eng._n_tables):
-        ncell, _ = eng._tau.get_total_table_size(i)
-        mn, mx = eng._tau.get_minimum_cell_value(i)
+        _, ncell, _ = eng._tau.get_total_table_size(i)
+        _, mn, mx = eng._tau.get_minimum_cell_value(i)
         spec, _ = eng._tables[i] if i < len(eng._tables) else (None, None)
         exp = ", ".join(spec.exp_vars) if spec else "?"
         resp = spec.resp_var if spec else "?"
@@ -384,8 +394,9 @@ def cmd_protect(args) -> int:
         if _is_parquet_name(fpath):
             rt.to_parquet(fpath)
         else:
-            result.engine._tau.write_csv(i, fpath, True,
-                                         IDENTITY_DIM_SEQUENCE, 1)
+            if not result.engine._tau.write_csv(i, fpath, True,
+                                                IDENTITY_DIM_SEQUENCE, 1):
+                raise BatchError(f"Could not write table {i + 1} to {fpath}")
         print(f"wrote table {i + 1} -> {fpath}")
     return 0
 
@@ -511,6 +522,34 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def exit_code_for(exc: BaseException) -> int:
+    """Stable exit-code mapping for the batch path (0.7.0 contract).
+
+    The 0.7.0 contract (docs/binding-error-contract.md) maps failure
+    class to a stable code so callers can distinguish *why* a batch run
+    failed instead of the flat exit 2 the 0.6.x CLI returned for every
+    ``BatchError``:
+
+        0  success
+        1  unexpected internal error (a bug)
+        2  usage error (bad CLI invocation; argparse + command checks)
+        3  engine failure (bad batch file, native core error, I/O)
+        4  solver failure (HiTaS suppression, rounder)
+        5  audit failure (CSP realized-interval audit)
+
+    Usage errors (exit 2) are produced by argparse and the command
+    handlers themselves, not here; everything that reaches this helper
+    is a runtime failure of a command that started executing.
+    """
+    if isinstance(exc, AuditError):
+        return 5
+    if isinstance(exc, SolverError):
+        return 4
+    if isinstance(exc, BatchError):
+        return 3
+    return 1
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -521,12 +560,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     try:
         return args.func(args)
-    except BatchError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
     except Exception as exc:  # noqa: BLE001
         print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return exit_code_for(exc)
 
 
 if __name__ == "__main__":  # pragma: no cover

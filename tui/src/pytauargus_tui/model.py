@@ -382,7 +382,7 @@ class Session:
         if i < 0 or i >= len(eng._tables):
             raise IndexError(f"table {i} out of range")
         spec, srs = eng._tables[i]
-        n, _ = eng._tau.get_total_table_size(i)
+        _, n, _ = eng._tau.get_total_table_size(i)
         return TableMeta(
             index=i,
             exp_vars=tuple(spec.exp_vars),
@@ -409,7 +409,7 @@ class Session:
         eng = self._eng
         vi = eng.metadata.index_of(var_name)
         var = eng.metadata.variables[vi]
-        _n_codes, n_active = eng._tau.get_var_number_of_codes(vi)
+        _, _n_codes, n_active = eng._tau.get_var_number_of_codes(vi)
         out: List[Tuple[int, str]] = []
         for ci in range(n_active):
             ok, _ct, cs, _miss, _level = eng._tau.get_var_code(vi, ci)

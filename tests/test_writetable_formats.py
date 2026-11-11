@@ -54,7 +54,7 @@ def test_sbs_suppressed_cells_carry_values(tmp_path):
     """Type 4 (SBS) writes the response value of unsafe and secondary
     cells (ShowUnsafe=true), never the ``x`` mask."""
     eng = _engine()
-    total = eng._tau.get_table_cell_value(0, 0)
+    _, total = eng._tau.get_table_cell_value(0, 0)
     assert total > 0
     eng._tau.set_table_cell_status_cell(0, 0, 9)  # CS_UNSAFE_MANUAL
     out = tmp_path / "sbs.csv"

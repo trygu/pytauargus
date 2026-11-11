@@ -51,7 +51,8 @@ for i, row in enumerate(before.rows):
         primary_idx = i
 assert primary_idx is not None, "the (Stor, Nord) cell is missing"
 
-lpl, upl = engine._tau.get_table_cell_protection_levels(0, primary_idx)
+ok, lpl, upl = engine._tau.get_table_cell_protection_levels(0, primary_idx)
+assert ok
 
 # Negative control before suppression: the manual cell's value is fully
 # recoverable from the published margins, so a skipped solver is visible.

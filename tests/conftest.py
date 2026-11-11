@@ -15,16 +15,18 @@ from pathlib import Path
 
 import pytest
 
-from pytauargus.engine import Engine, run_batch
-
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 DATA = (
     Path(os.environ.get("TAUARGUS_ENGINE_DIR", str(ROOT.parent / "tauargus-engine")))
     / "data"
 )
+# The path setup must precede any pytauargus import (including below),
+# otherwise an installed wheel would shadow the in-tree sources.
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+
+from pytauargus.engine import Engine, run_batch  # noqa: E402
 
 
 @pytest.fixture(scope="module")

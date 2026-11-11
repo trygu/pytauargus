@@ -65,8 +65,8 @@ def _find_cell(engine, want_status):
     """Return ``(dim, [code1, code2])`` of the first cell with ``want_status``."""
     tau = engine._tau
     vi0, vi1 = _exp_var_indices(engine)
-    n0, _ = tau.get_var_number_of_codes(vi0)
-    n1, _ = tau.get_var_number_of_codes(vi1)
+    _, n0, _ = tau.get_var_number_of_codes(vi0)
+    _, n1, _ = tau.get_var_number_of_codes(vi1)
     for d0 in range(n0):
         for d1 in range(n1):
             if _status(tau, 0, [d0, d1]) == want_status:

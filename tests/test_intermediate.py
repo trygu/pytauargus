@@ -49,7 +49,7 @@ def _run_batch_probe(arb: Path, tmp_path: Path, n_tables: int):
         f"eng = run_batch({str(arb)!r})\n"
         "out = []\n"
         "for i in range(eng._n_tables):\n"
-        "    ncell, _ = eng._tau.get_total_table_size(i)\n"
+        "    _, ncell, _ = eng._tau.get_total_table_size(i)\n"
         "    spec, srs = eng._tables[i]\n"
         "    n_exp = len(spec.exp_vars)\n"
         "    topn = eng._top_n_needed(srs, False)\n"
