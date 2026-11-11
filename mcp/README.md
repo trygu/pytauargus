@@ -59,8 +59,11 @@ uvx pytauargus-mcp
 tauargus-mcp   # starts the server on stdio
 ```
 
-Point an MCP client at the console script. For OpenCode, add a
-`tauargus` server to the project or user config:
+The server is a local process that the client starts for you. Point the
+client at the `tauargus-mcp` console script. With a pip install it is on
+the `PATH`; without one, use `uvx pytauargus-mcp` instead.
+
+**OpenCode.** Add a `tauargus` server to the project or user config:
 
 ```json
 {
@@ -76,10 +79,8 @@ Point an MCP client at the console script. For OpenCode, add a
 }
 ```
 
-With a pip install the console script is on the `PATH`; without one,
-point the command at uv instead (`"command": ["uvx", "pytauargus-mcp"]`).
-
-Other MCP clients use the standard `mcpServers` shape:
+**Claude Desktop.** Add a `tauargus` entry to `claude_desktop_config.json`
+(the app opens it from Settings, Developer, Edit Config) and restart it:
 
 ```json
 {
@@ -88,6 +89,27 @@ Other MCP clients use the standard `mcpServers` shape:
   }
 }
 ```
+
+Desktop starts the command without your shell environment; if it does not
+find the script, use its absolute path (`which tauargus-mcp`).
+
+**Claude Code.**
+
+```bash
+claude mcp add tauargus -- tauargus-mcp
+```
+
+**Gemini CLI.**
+
+```bash
+gemini mcp add -s user tauargus tauargus-mcp
+```
+
+or add the same `mcpServers` entry to `~/.gemini/settings.json`.
+
+**ChatGPT.** Its custom connectors connect to a remote server over
+HTTPS and cannot start a local one, so this server does not work with
+ChatGPT.
 
 When the server connects, the client lists its six tools. In OpenCode,
 `/mcps` shows `✓ tauargus connected`.
