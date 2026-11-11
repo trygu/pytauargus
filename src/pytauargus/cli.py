@@ -334,10 +334,13 @@ def cmd_save(args) -> int:
         else:  # default: <data_stem>_table<n>.{csv|tab} next to the data file
             fpath = _default_out_name(eng, i, default_suffix)
         if args.format == "csv":
-            eng._tau.write_csv(i, str(fpath), True, IDENTITY_DIM_SEQUENCE, 1)
+            if not eng._tau.write_csv(i, str(fpath), True, IDENTITY_DIM_SEQUENCE, 1):
+                raise BatchError(f"Could not write table {i + 1} to {fpath}")
         elif args.format == "cell":
-            eng._tau.write_cell_records(
-                i, str(fpath), False, args.status, False, "", args.unsafe, True, 1)
+            if not eng._tau.write_cell_records(
+                    i, str(fpath), False, args.status, False, "", args.unsafe,
+                    True, 1):
+                raise BatchError(f"Could not write table {i + 1} to {fpath}")
         elif args.format == "intermediate":
             eng.write_intermediate_table(i, str(fpath), with_audit=args.audit)
         else:
@@ -384,8 +387,9 @@ def cmd_protect(args) -> int:
         if _is_parquet_name(fpath):
             rt.to_parquet(fpath)
         else:
-            result.engine._tau.write_csv(i, fpath, True,
-                                         IDENTITY_DIM_SEQUENCE, 1)
+            if not result.engine._tau.write_csv(i, fpath, True,
+                                                IDENTITY_DIM_SEQUENCE, 1):
+                raise BatchError(f"Could not write table {i + 1} to {fpath}")
         print(f"wrote table {i + 1} -> {fpath}")
     return 0
 

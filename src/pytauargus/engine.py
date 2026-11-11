@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -719,7 +720,9 @@ class Engine:
 
         self._tau.clean_all()
         self._tau.set_in_file_info(True, "")
-        self._tau.set_number_var(len(meta.variables))
+        if not self._tau.set_number_var(len(meta.variables)):
+            raise BatchError(
+                f"SetNumberVar failed for {len(meta.variables)} variables")
 
         for var in meta.variables:
             self._set_variable(var)
@@ -731,7 +734,7 @@ class Engine:
 
     def _set_variable(self, var: Variable) -> None:
         n_miss = var.n_missings()
-        self._tau.set_variable(
+        if not self._tau.set_variable(
             index=var.index,
             b_pos=var.b_pos,
             n_pos=var.var_len,
@@ -749,10 +752,16 @@ class Engine:
             is_hierarchical=var.hierarchical != 0,
             is_holding=var.is_holding,
             is_record_key=var.is_record_key,
-        )
+        ):
+            raise BatchError(f"SetVariable failed for variable {var.name}")
         if var.hierarchical == 2:  # HIER_FILE
             hier_path = self._resolve_path(var.hier_file_name)
-            self._tau.set_hierarchical_codelist(var.index, str(hier_path), var.leading_string)
+            rc = self._tau.set_hierarchical_codelist(
+                var.index, str(hier_path), var.leading_string)
+            if rc != 1:  # 1 = success; HC_* codes (>= 1500) = failure
+                raise BatchError(
+                    f"SetHierarchicalCodelist failed for variable {var.name} "
+                    f"file={var.hier_file_name}: {self._tau.error_string(rc)}")
         elif var.hierarchical == 1:  # HIER_LEVELS
             # Trim trailing zero levels (Java counts up to the last non-zero).
             levels = var.hier_levels
@@ -787,7 +796,8 @@ class Engine:
     def _finalize_tables(self) -> None:
         """Call native SetTable + SetTableSafety for each registered table."""
         self._n_tables = len(self._tables)
-        self._tau.set_number_tab(self._n_tables)
+        if not self._tau.set_number_tab(self._n_tables):
+            raise BatchError(f"SetNumberTab failed for {self._n_tables} tables")
         for i, (spec, srs) in enumerate(self._tables):
             self._call_set_table(i, spec)
             self._call_set_table_safety(i, srs)
@@ -907,7 +917,9 @@ class Engine:
         """
         self._tau.clean_all()
         self._tau.set_in_file_info(False, meta.field_separator)
-        self._tau.set_number_var(len(meta.variables))
+        if not self._tau.set_number_var(len(meta.variables)):
+            raise BatchError(
+                f"SetNumberVar failed for {len(meta.variables)} variables")
 
         self._compute_var_lengths(meta)
 
@@ -917,7 +929,8 @@ class Engine:
         # Mark that tables are given directly rather than computed from micro
         # data (Java: ThroughTable → m_UsingMicroData = false).
         self._tau.through_table()
-        self._tau.set_number_tab(len(self._tables))
+        if not self._tau.set_number_tab(len(self._tables)):
+            raise BatchError(f"SetNumberTab failed for {len(self._tables)} tables")
 
     def read_table(self, additivity: int = 0, keep_status: bool = False) -> None:
         """Read a tabular table: port of ``TableSet.read`` (3-phase flow).
@@ -1266,8 +1279,13 @@ class Engine:
         for nc, st in enumerate(statuses):
             if st in (CS_UNKNOWN, CS_EMPTY, 13):  # UNKNOWN/EMPTY/EMPTY_NONSTRUCT
                 continue
-            self._tau.set_table_cell_status_cell(idx, nc, st)
-            self._tau.set_table_cell_protection_levels(idx, nc, lpls[nc], upls[nc])
+            if not self._tau.set_table_cell_status_cell(idx, nc, st):
+                raise BatchError(
+                    f"Restoring cell status failed for table {idx} cell {nc}")
+            if not self._tau.set_table_cell_protection_levels(
+                    idx, nc, lpls[nc], upls[nc]):
+                raise BatchError(
+                    f"Restoring protection levels failed for table {idx} cell {nc}")
 
     def _call_set_table_safety_info(self, idx: int, srs: SafetyRuleSet) -> None:
         """Port of the Java ``SetTableSafetyInfo`` call for a tabular table."""
@@ -1618,13 +1636,16 @@ class Engine:
 
     def _recode_truncate(self, var_idx: int, max_level: int) -> None:
         """Deactivate every node at ``max_level`` that has children, then recode."""
-        self._tau.undo_recode(var_idx)
+        if not self._tau.undo_recode(var_idx):
+            raise BatchError(f"UndoRecode failed for variable {var_idx}")
         _, n_codes, _ = self._tau.get_var_number_of_codes(var_idx)
         closed = 0
         for i in range(n_codes):
             ok, _, _, _, level, n_child, _ = self._tau.get_var_code_properties(var_idx, i)
             if ok and level == max_level and n_child > 0:
-                self._tau.set_var_code_active(var_idx, i, False)
+                if not self._tau.set_var_code_active(var_idx, i, False):
+                    raise BatchError(
+                        f"SetVarCodeActive failed for variable {var_idx} code {i}")
                 closed += 1
         if closed > 0:
             if not self._tau.do_active_recode(var_idx):
@@ -1635,7 +1656,8 @@ class Engine:
 
     def _recode_tree(self, var_idx: int, path: Path) -> None:
         """Deactivate the parent codes listed in a <TREERECODE> file, then recode."""
-        self._tau.undo_recode(var_idx)
+        if not self._tau.undo_recode(var_idx):
+            raise BatchError(f"UndoRecode failed for variable {var_idx}")
         # Build code-string -> code-index lookup.
         _, n_codes, _ = self._tau.get_var_number_of_codes(var_idx)
         index_by_code: Dict[str, int] = {}
@@ -1651,7 +1673,9 @@ class Engine:
             ci = index_by_code.get(code)
             if ci is None:
                 raise BatchError(f"Code ({code}) not found")
-            self._tau.set_var_code_active(var_idx, ci, False)
+            if not self._tau.set_var_code_active(var_idx, ci, False):
+                raise BatchError(
+                    f"SetVarCodeActive failed for variable {var_idx} code {ci}")
             closed += 1
         if closed > 0:
             if not self._tau.do_active_recode(var_idx):
@@ -2171,10 +2195,7 @@ class Engine:
                                new_status: int, tau,
                                stats: Dict[str, int]) -> None:
         """Apply a single apriori change to one cell (APriori.ProcessOneVarCode)."""
-        try:
-            res = tau.get_table_cell(tab, list(dim), 0)
-        except Exception:
-            return
+        res = tau.get_table_cell(tab, list(dim), 0)
         if not res or not res[0]:
             return
         old_status = res[10]
@@ -2182,7 +2203,10 @@ class Engine:
             return  # "met status EMPTY mag niks gebeuren"
 
         if ap_type in ("C", "W"):  # change cost
-            cost = x1 if x1 > 0 else 1.0
+            # Legacy: x1 <= 0 → 1 ("zero is a silly value"). Extend the same
+            # default to non-finite values, which the legacy comparison let
+            # through (NaN <= 0 and NaN > 0 are both False, Inf > 0 is True).
+            cost = x1 if math.isfinite(x1) and x1 > 0 else 1.0
             if tau.set_table_cell_cost(tab, list(dim), cost):
                 stats["cost_ok"] += 1
             else:
@@ -2190,7 +2214,11 @@ class Engine:
             return
 
         if ap_type == _AP_ADJUST_PROT_LEVEL or ap_type == "PL":
-            if x1 < 0 or x2 < 0:
+            # Legacy: x1 < 0 or x2 < 0 → "Illegal values for the protection
+            # levels". Extend to non-finite values, which the legacy
+            # comparison let through (NaN < 0 is False, Inf < 0 is False).
+            if (not math.isfinite(x1) or not math.isfinite(x2)
+                    or x1 < 0 or x2 < 0):
                 stats["protlevel_err"] += 1
                 return
             if not (CS_UNSAFE_RULE <= old_status <= CS_UNSAFE_MANUAL):
