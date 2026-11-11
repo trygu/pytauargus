@@ -13,6 +13,7 @@ is the only place that imports ``mcp``. Start the server with the
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -174,7 +175,98 @@ def protect_tables(microdata: Union[str, Dict[str, List[Any]]],
             "path": str(t.path) if t.path is not None else None,
         })
     return {"workdir": res.workdir, "files": dict(res.files),
-            "n_tables": len(res.tables), "tables": out_tables}
+            "n_tables": len(res.tables), "tables": out_tables,
+            "status_legend": status_legend()}
+
+
+def assess_table(microdata: Union[str, Dict[str, List[Any]]],
+                 tables: list, response: str,
+                 safety_rules: str = "P(25,1)",
+                 workdir: Optional[str] = None) -> Dict[str, Any]:
+    """Run the safety rules without suppressing: what is sensitive, and why.
+
+    Builds the same ``<SPECIFYTABLE>`` + ``<SAFETYRULE>`` blocks as
+    :func:`protect_tables` but no ``<SUPPRESS>`` step, so the engine
+    classifies every cell and withholds nothing. Returns, per table, the
+    cells the rules flag (``U`` primary sensitive, ``E`` empty) with their
+    value and contributor count (``freq``), the applied rules explained in
+    plain words (see :func:`rule_meanings`), and the status legend. The
+    generated batch (``files["arb"]``) is kept for inspection.
+    """
+    import tempfile
+
+    from pytauargus.dataframe import to_microdata
+    from pytauargus.micro import micro_asc_rda
+    from pytauargus.arb import specif_safety
+    from pytauargus.engine import run_batch
+    from pytauargus.result import TableResult
+
+    if isinstance(microdata, str):
+        mp = Path(microdata)
+        if not mp.is_file():
+            raise FileNotFoundError(f"microdata file not found: {mp}")
+    micro = to_microdata(microdata)
+    if all(isinstance(t, str) for t in tables):
+        tab_specs = [list(tables)]
+    else:
+        tab_specs = [list(t) for t in tables]
+    n = len(tab_specs)
+
+    if workdir is None:
+        workdir = tempfile.mkdtemp(prefix="tauargus_assess_")
+    wd = Path(workdir).resolve()
+    wd.mkdir(parents=True, exist_ok=True)
+    asc = str(wd / "micro.asc")
+    rda = str(wd / "micro.rda")
+    arb = str(wd / "assess.arb")
+    micro_asc_rda(micro, asc_filename=asc, rda_filename=rda)
+    output_names = [str(wd / f"tab{i + 1}.tab") for i in range(n)]
+
+    sr = "" if safety_rules is None else safety_rules
+    rules = [sr] if isinstance(sr, str) else list(sr)
+
+    lines = ['<OPENMICRODATA> "%s"' % asc,
+             '<OPENMETADATA> "%s"' % rda]
+    lines += specif_safety(tab_specs, [response], None, None, rules, [False])
+    lines.append("<READMICRODATA>")
+    for i, out in enumerate(output_names, 1):
+        lines.append('<WRITETABLE> (%d,5,SO+,"%s")' % (i, out))
+    Path(arb).write_text("\n".join(lines) + "\n")
+
+    run_batch(arb)
+
+    files = {"asc": asc, "rda": rda, "arb": arb}
+    out_tables: List[Dict[str, Any]] = []
+    for i, out in enumerate(output_names):
+        files[f"tab{i + 1}"] = out
+        t = TableResult(path=out, exp_vars=tab_specs[i],
+                        response=response, is_freq=False)
+        rows = t.rows
+        statuses = t.status()
+        status_counts: Dict[str, int] = {}
+        for s in statuses:
+            status_counts[s] = status_counts.get(s, 0) + 1
+        sensitive: List[Dict[str, Any]] = []
+        for idx, row in enumerate(rows):
+            if statuses[idx] in ("U", "E"):
+                sensitive.append({
+                    "cell": idx,
+                    "dims": {dim: row[dim] for dim in t._exp},
+                    "value": row[response],
+                    "freq": row["freq"],
+                    "status": statuses[idx],
+                })
+        out_tables.append({
+            "n_cells": t.n_cells,
+            "status_counts": status_counts,
+            "sensitive_cells": sensitive,
+            "columns": t.columns,
+            "path": out,
+        })
+    return {"workdir": str(wd), "files": files,
+            "n_tables": n, "tables": out_tables,
+            "rules": rule_meanings(rules),
+            "status_legend": status_legend()}
 
 
 def audit_table(arb_path: str, tab: int = 0) -> Dict[str, Any]:
@@ -196,10 +288,340 @@ def audit_table(arb_path: str, tab: int = 0) -> Dict[str, Any]:
 
 
 # ===========================================================================
+# Consultant layer: the context an agent needs to advise a non-expert
+# ===========================================================================
+
+# Plain words for the numeric cell status codes the engine reports. The
+# agent uses these to explain *what* a cell is, in words a statistician
+# understands, rather than raw single letters.
+_STATUS_LEGEND = {
+    "S": "safe: published as is",
+    "U": "unsafe (primary): the value is sensitive and is withheld",
+    "M": "secondary: withheld so a primary cell cannot be reconstructed",
+    "P": "protected: a publication constraint; not selected for suppression",
+    "E": "empty: no contributing records",
+}
+
+
+def status_legend() -> Dict[str, str]:
+    """Plain words for the numeric cell status codes (S, U, M, P, E)."""
+    return dict(_STATUS_LEGEND)
+
+
+def rule_meanings(safety_rules: Union[str, List[str]]) -> List[Dict[str, str]]:
+    """Plain words for the safety rules (from the 4.1 manual).
+
+    ``safety_rules`` is one rule string or a per-table list; a rule string
+    may join several rules with ``|`` (e.g. ``"P(25,1)|FREQ(3,20)"``).
+    Each distinct token comes back as ``{"rule", "meaning"}``; a token
+    without a known meaning says so instead of guessing.
+    """
+    per_table = [safety_rules] if isinstance(safety_rules, str) else list(safety_rules)
+    out: List[Dict[str, str]] = []
+    seen = set()
+    for rules in per_table:
+        for token in (r.strip() for r in rules.split("|")):
+            if token and token not in seen:
+                seen.add(token)
+                out.append({"rule": token,
+                            "meaning": _rule_meaning(token)})
+    return out
+
+
+def _rule_meaning(token: str) -> str:
+    """Plain words for one rule token, grounded in the 4.1 manual."""
+    m = re.match(r"^([A-Za-z]+)\s*\((.*)\)$", token)
+    if not m:
+        return "no plain description; see the 4.1 manual"
+    name = m.group(1).upper()
+    args = [a.strip() for a in m.group(2).split(",")]
+
+    def arg(i: int) -> str:
+        return args[i] if i < len(args) else "?"
+
+    if name == "P":
+        try:
+            n_in = int(arg(1))
+        except ValueError:
+            n_in = 1
+        return ("p%% dominance rule: a cell is sensitive when the largest "
+                "contribution dominates it. The cell passes only if the "
+                "total of all but the %d largest contributors is at least "
+                "%s%% of the largest contribution (n = %d intruder%s in "
+                "the coalition)." % (n_in + 1, arg(0), n_in,
+                                     "" if n_in == 1 else "s"))
+    if name == "NK":
+        return ("dominance rule: a cell is sensitive when the %s largest "
+                "contributors together account for more than %s%% of the "
+                "cell total." % (arg(0), arg(1)))
+    if name == "FREQ":
+        return ("minimum frequency: a cell is sensitive when fewer than %s "
+                "respondents contribute to it." % arg(0))
+    if name == "ZERO":
+        return "zero rule: cells whose value is zero are sensitive."
+    if name == "REQ":
+        return ("request rule: a cell is sensitive when a respondent who "
+                "asked to be protected holds one of the configured shares "
+                "(%s%% or %s%%) of it." % (arg(0), arg(1)))
+    if name == "MAN":
+        return ("manual rule: cells marked unsafe in the input data are "
+                "protected with a %s%% safety margin." % arg(0))
+    if name == "WGT":
+        if arg(0) == "1":
+            return ("weighting: contributions are summed with the weight "
+                    "variable.")
+        return "weighting: contributions are summed as recorded (no weights)."
+    if name == "MIS":
+        if arg(0) == "1":
+            return ("missing values: a cell is treated as safe when its "
+                    "spanning code is a declared missing value.")
+        return "missing values: the ordinary rules apply to cells with " \
+               "missing codes."
+    return "no plain description in the 4.1 manual; check the batch reference."
+
+
+# The protection methods of the 4.1 manual, with their trade-offs. ``applies``
+# and the recommendation are computed per table structure in
+# :func:`method_advice`; the pros/cons/use are the fixed reference text.
+_METHODS = [
+    {"method": "Global recoding",
+     "pros": ["Reduces sensitivity by design before any suppression",
+              "Can cut the number of cells that must be suppressed"],
+     "cons": ["Loses classification detail",
+              "Not available for ready-made (pre-tabulated) tables"],
+     "use": "A first move when the table is more detailed than the release "
+            "needs."},
+    {"method": "Optimal",
+     "pros": ["Globally optimal: affects the fewest cells and least "
+              "information",
+              "Models the whole table at once"],
+     "cons": ["Can take substantial time on large tables",
+              "Limited to about four dimensions"],
+     "use": "The default for most microdata tables of up to four dimensions."},
+    {"method": "Modular / HiTaS",
+     "pros": ["Fast: processes a hierarchy level by level",
+              "Handles hierarchies top-down"],
+     "cons": ["A sub-table optimum is not the global optimum",
+              "A full-table audit can still find narrow intervals"],
+     "use": "A faster alternative for hierarchical tables."},
+    {"method": "Hypercube / GHMITER",
+     "pros": ["The documented route for 5- and 6-dimensional tables",
+              "Supports linked table sets"],
+     "cons": ["Heuristic; can over-suppress",
+              "Ignores the user's cost variable"],
+     "use": "Required when a table has five or six dimensions."},
+    {"method": "Network",
+     "pros": ["Fast network-flow heuristic",
+              "No commercial solver needed"],
+     "cons": ["Two dimensions only, with one hierarchy in the first variable",
+              "Gives a feasible, not necessarily optimal, pattern"],
+     "use": "A fast option for a two-way table with a single hierarchy."},
+    {"method": "Controlled tabular adjustment (CTA)",
+     "pros": ["Adjusts values instead of suppressing, so more cells are "
+              "published",
+              "Preserves additive relations"],
+     "cons": ["Publishes values that differ from the true ones",
+              "Protection means moving a value, not a suppression interval"],
+     "use": "When you prefer complete, adjusted tables to suppressed ones."},
+    {"method": "Controlled rounding",
+     "pros": ["Particularly suited to frequency (count) tables",
+              "Keeps totals and subtotals adding up"],
+     "cons": ["Values become multiples of a base",
+              "Base, steps and stopping rule affect distortion"],
+     "use": "The natural choice for count or frequency tables."},
+]
+
+
+def _method_applies(name: str, n_dimensions: int, hierarchical: bool) -> bool:
+    if name in ("Optimal", "Modular / HiTaS"):
+        return n_dimensions <= 4
+    if name == "Network":
+        return n_dimensions == 2 and hierarchical
+    # Global recoding, Hypercube, CTA and Controlled rounding are always
+    # available as a method choice for the documented structures.
+    return True
+
+
+def _recommend(n_dimensions: int, frequency: bool) -> str:
+    if n_dimensions >= 5:
+        return "Hypercube / GHMITER"
+    if frequency:
+        return "Controlled rounding"
+    return "Optimal"
+
+
+def method_advice(n_dimensions: int,
+                  hierarchical: bool = False,
+                  frequency: bool = False) -> Dict[str, Any]:
+    """Which protection methods fit a table, with their trade-offs.
+
+    ``n_dimensions`` is the number of explanatory (dimension) variables in
+    the table, 1 to 6. ``hierarchical`` marks a table with a hierarchy
+    dimension. ``frequency`` marks a count table (the response is a
+    frequency). Returns each method with ``applies``/``pros``/``cons``/
+    ``use`` and the ``recommended`` method for this structure.
+    """
+    if isinstance(n_dimensions, bool) or not isinstance(n_dimensions, int):
+        raise TypeError("n_dimensions must be an int")
+    if not 1 <= n_dimensions <= 6:
+        raise ValueError("n_dimensions must be between 1 and 6")
+    methods = [{
+        "method": m["method"],
+        "applies": _method_applies(m["method"], n_dimensions, hierarchical),
+        "pros": list(m["pros"]),
+        "cons": list(m["cons"]),
+        "use": m["use"],
+    } for m in _METHODS]
+    return {
+        "n_dimensions": n_dimensions,
+        "hierarchical": hierarchical,
+        "frequency": frequency,
+        "recommended": _recommend(n_dimensions, frequency),
+        "methods": methods,
+    }
+
+
+# Agent-facing context sent at MCP initialization: the consultant workflow,
+# the questions to ask before protecting, the status legend, the rule-string
+# grammar, and the cite-the-manual rule.
+INSTRUCTIONS = """\
+tau-ARGUS statistical disclosure control (SDC) for tabular data.
+
+You are an expert SDC consultant for a statistician who wants to publish a
+table from microdata safely. The engine is stateless: each tool call carries
+its inputs and returns a full result. The `.arb` batch file is the state
+carrier of the batch flow.
+
+Workflow (consult the statistician as you go):
+1. tauargus_explore the microdata to learn its variables and types.
+2. Ask the questions you need before protecting:
+   - which table(s) to publish: the explanatory (dimension) variables and
+     the numeric response variable;
+   - why the data is sensitive: dominance (a few large contributors), small
+     frequency, zero cells, or a respondent request;
+   - which policy: use the standard policy unless the statistician names one.
+3. tauargus_method_advice with the table's structure to see which protection
+   methods apply, their pros and cons, and the recommendation. Read
+   tauargus://doc/protection-methods for the full discussion. Explain the
+   trade-off in plain words and confirm the choice.
+4. tauargus_assess (the same table and safety rules, but no suppression) to
+   see exactly which cells the rules flag and with what values and
+   contributor counts. Use the plain rule meanings in the result to explain
+   in words *why* each sensitive cell is sensitive, before anything is
+   withheld.
+5. tauargus_protect to build, suppress and write the tables. The
+   suppression solve is one blocking call with no progress in between:
+   announce it before starting, and warn when the table is large or
+   high-dimensional (several hundred cells, three or more dimensions)
+   that it can take a long time. Step 4 is the quick preview: assess
+   runs without the solver and returns fast, so show the statistician
+   what would be flagged before the long call.
+6. tauargus_audit to verify the suppressed cells keep their values from being
+   reconstructed.
+7. Report the outcome in plain words using the status legend below. If the
+   audit shows a value can still be reconstructed, hold and flag it rather
+   than present a leaking table as safe.
+
+Cell status codes (also returned as status_legend in protect results):
+- S  safe: published as is
+- U  unsafe (primary): sensitive, value withheld
+- M  secondary: withheld so a primary cell cannot be reconstructed
+- P  protected: a publication constraint; not selected for suppression
+- E  empty: no contributing records
+
+Rule-string grammar (expert path): P(p,n) p%-rule with n intruders (default
+n=1); FREQ(min,range) minimum frequency; ZERO(range) zero cells; OPT(1)
+optimal suppression; MOD(1) modular; NET(1) network. Cite the 4.1 manual for
+thresholds; do not invent them.
+"""
+
+# The protection-methods reference the agent reads for the full trade-off
+# discussion (from the 4.1 manual, "Choosing and understanding protection
+# methods").
+_PROTECTION_METHODS_DOC = """\
+# tau-ARGUS protection methods
+
+How to choose a protection method, from the 4.1 manual. Each method changes
+the table in a different way; the right one depends on the table's structure
+and on whether you would rather suppress cells or adjust values.
+
+## Suppression methods (withhold cell values)
+
+### Optimal
+Models the complete table and its additive relations, then suppresses the
+fewest cells needed. Globally optimal: minimal information loss. Limited to
+about four dimensions and can take substantial time on large tables. This is
+the default for most microdata tables.
+
+### Modular / HiTaS
+Processes a hierarchy level by level, protecting higher levels and fixing
+their margins before the lower interior. Fast, but a sub-table optimum is not
+the global optimum; a full-table audit can still find intervals that are too
+narrow.
+
+### Hypercube / GHMITER
+Suppresses the corners of a hypercube around each primary to block exact
+reconstruction. The documented route for 5- and 6-dimensional tables and for
+linked sets. Heuristic: it can over-suppress and ignores the user's cost
+variable.
+
+### Network
+A shortest-path / network-flow heuristic for a two-way table with one
+hierarchy in the first variable. Fast and solver-free, but gives a feasible,
+not necessarily optimal, pattern.
+
+## Adjustment methods (change cell values, keep the table complete)
+
+### Controlled tabular adjustment (CTA)
+Moves each sensitive value at least its required distance in a chosen
+direction and minimally adjusts the other values so the table still adds up.
+More cells stay published, but the published values differ from the true
+ones; protection means moving a value, not a suppression interval.
+
+### Controlled rounding
+Rounds every value to a multiple of a base while keeping totals and
+subtotals adding up. Particularly suited to frequency (count) tables. The
+base, permitted steps, partitioning and stopping rule all affect how much the
+margins move.
+
+## A design move, not a solver method
+
+### Global recoding (table redesign)
+Merge row, column or hierarchy categories before suppressing. Reduces
+sensitivity by design and can cut the number of suppressions, at the cost of
+classification detail. Not available for ready-made (pre-tabulated) tables.
+
+## Choosing
+
+- Up to four dimensions, value table: **Optimal**.
+- Five or six dimensions: **Hypercube / GHMITER** (the only documented route).
+- A two-way table with one hierarchy: **Network** is a fast option; Optimal
+  still applies.
+- A count or frequency table: **Controlled rounding**.
+- When you would rather publish adjusted values than suppress: **CTA**.
+- When the table is finer than the release needs: consider **Global
+  recoding** first.
+
+Whichever method you use, run the audit afterwards and inspect any interval
+that is too narrow. The method report and the log record what was actually
+established (feasible, optimal-proven, or time-limited).
+"""
+
+
+# ===========================================================================
 # MCP registration: thin wrappers, the core logic above does the work
 # ===========================================================================
 
-mcp = FastMCP("tauargus")
+mcp = FastMCP("tauargus", instructions=INSTRUCTIONS)
+
+
+@mcp.resource("tauargus://doc/protection-methods",
+              name="protection-methods",
+              description="How to choose a tau-ARGUS protection method, from "
+                          "the 4.1 manual.")
+def protection_methods_doc() -> str:
+    """The trade-offs of the protection methods, as markdown."""
+    return _PROTECTION_METHODS_DOC
 
 
 @mcp.tool()
@@ -276,6 +698,23 @@ def tauargus_protect(microdata: Union[str, Dict[str, List[Any]]],
 
 
 @mcp.tool()
+def tauargus_assess(microdata: Union[str, Dict[str, List[Any]]],
+                    tables: list, response: str,
+                    safety_rules: str = "P(25,1)",
+                    workdir: Optional[str] = None) -> Dict[str, Any]:
+    """Run the safety rules without suppressing: what is sensitive, and why.
+
+    Same inputs as tauargus_protect except the suppression spec. Returns,
+    per table, the cells the rules flag (``U`` sensitive, ``E`` empty) with
+    their value and contributor count, the applied rules explained in plain
+    words, and the status legend. Nothing is withheld, so the statistician
+    sees exactly what a protection would act on before it happens.
+    """
+    return assess_table(microdata, tables, response,
+                        safety_rules=safety_rules, workdir=workdir)
+
+
+@mcp.tool()
 def tauargus_audit(arb_path: str, tab: int = 0) -> Dict[str, Any]:
     """Audit the suppressed cells of a table computed by a batch.
 
@@ -285,6 +724,23 @@ def tauargus_audit(arb_path: str, tab: int = 0) -> Dict[str, Any]:
     row per suppressed cell, empty when none are suppressed.
     """
     return audit_table(arb_path, tab)
+
+
+@mcp.tool()
+def tauargus_method_advice(n_dimensions: int,
+                           hierarchical: bool = False,
+                           frequency: bool = False) -> Dict[str, Any]:
+    """Advise which protection method fits a table, with its trade-offs.
+
+    Call this before protecting, to explain the choice to the statistician.
+    ``n_dimensions`` is the number of dimension variables in the table
+    (1 to 6). ``hierarchical`` is true when a dimension is a hierarchy.
+    ``frequency`` is true when the response is a count. Returns each method
+    with ``applies``/``pros``/``cons``/``use`` and the ``recommended``
+    method for this structure. Read ``tauargus://doc/protection-methods``
+    for the full discussion.
+    """
+    return method_advice(n_dimensions, hierarchical, frequency)
 
 
 def main() -> None:
