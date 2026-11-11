@@ -13,7 +13,7 @@ gives you the `pytauargus` package and the `tauargus` CLI.
 
 ## What it does
 
-Six tools cover the core workflow.
+Eight tools cover the workflow.
 
 - **`tauargus_version`** reports the `pytauargus` package version and the
   native engine version.
@@ -30,8 +30,24 @@ Six tools cover the core workflow.
   paths.
 - **`tauargus_audit`** audits the suppressed cells of a table computed
   by a batch and returns their realised feasibility intervals.
+- **`tauargus_method_advice`** recommends a protection method for the
+  table structure (dimensions, hierarchy, weights) and explains the
+  trade-offs of the applicable alternatives.
+- **`tauargus_assess`** runs the safety rules without suppressing and
+  returns the cells the rules flag, with their values and contributor
+  counts, plus the applied rules in plain words. It previews what a
+  protection run would withhold, so it runs first.
 
 The server runs on the stdio transport.
+
+## Basis
+
+The method advice, rule meanings and status legend describe standard
+statistical disclosure control practice as documented in the legacy
+tau-ARGUS 4.1 manual. The method trade-offs follow the overview in
+Meindl (2025), *Statistical Disclosure Control. Improving tools and
+methods to facilitate the application*, doctoral thesis, Johannes
+Kepler University Linz.
 
 ## Install
 
@@ -111,7 +127,7 @@ or add the same `mcpServers` entry to `~/.gemini/settings.json`.
 HTTPS and cannot start a local one, so this server does not work with
 ChatGPT.
 
-When the server connects, the client lists its six tools. In OpenCode,
+When the server connects, the client lists its eight tools. In OpenCode,
 `/mcps` shows `✓ tauargus connected`.
 
 ## Develop (monorepo)
