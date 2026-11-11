@@ -1284,7 +1284,9 @@ jobs:
                       for plat in ("manylinux_2_28_x86_64",
                                    "manylinux_2_28_aarch64",
                                    "macosx_arm64", "win_amd64")
-                      for cp in ("311", "312", "313", "314", "315")}
+                      # must match the wheel build matrix above (3.11-3.14
+                      # for 0.7.0; cp315 re-added in 0.7.1+)
+                      for cp in ("311", "312", "313", "314")}
           missing = sorted(required - have)
           if missing:
               sys.exit(f"missing required wheels: {missing}")
