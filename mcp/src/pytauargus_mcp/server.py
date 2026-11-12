@@ -233,14 +233,15 @@ def assess_table(microdata: Union[str, Dict[str, List[Any]]],
         lines.append('<WRITETABLE> (%d,5,SO+,"%s")' % (i, out))
     Path(arb).write_text("\n".join(lines) + "\n")
 
-    run_batch(arb)
+    eng = run_batch(arb)
 
     files = {"asc": asc, "rda": rda, "arb": arb}
     out_tables: List[Dict[str, Any]] = []
     for i, out in enumerate(output_names):
         files[f"tab{i + 1}"] = out
         t = TableResult(path=out, exp_vars=tab_specs[i],
-                        response=response, is_freq=False)
+                        response=response, is_freq=False,
+                        statuses=eng.table_cell_statuses(i))
         rows = t.rows
         statuses = t.status()
         status_counts: Dict[str, int] = {}
@@ -255,6 +256,7 @@ def assess_table(microdata: Union[str, Dict[str, List[Any]]],
                     "value": row[response],
                     "freq": row["freq"],
                     "status": statuses[idx],
+                    "reason": t.reason()[idx],
                 })
         out_tables.append({
             "n_cells": t.n_cells,

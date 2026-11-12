@@ -207,7 +207,8 @@ def protect(microdata,
         rt = TableResult(path=output_names[i],
                          exp_vars=tab_specs[i],
                          response=resp_per_tab[i],
-                         is_freq=False)
+                         is_freq=False,
+                         statuses=eng.table_cell_statuses(i))
         result.tables.append(rt)
     return result
 
