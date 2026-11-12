@@ -325,4 +325,12 @@ the dominance example from its magnitude-table vignette.
 
 ## License
 
-EUPL-1.2. Tau-Argus is (c) Statistics Netherlands.
+This project, including the Python library, CLI and original adaptations, is
+distributed under **EUPL-1.2**; see [LICENCE](LICENCE).
+
+Original Tau-Argus and EUPL 1.1 notices are retained; Article 5 permits the
+later-version distribution. Separately identified third-party components keep
+their original notices and terms. See [NOTICE.txt](NOTICE.txt),
+[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) and [SOURCE.txt](SOURCE.txt).
+The CSP historical-header ambiguity raised in [issue #26](https://github.com/trygu/pytauargus/issues/26)
+is recorded in NOTICE.txt; rights-holder confirmation has not been received.

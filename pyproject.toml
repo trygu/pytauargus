@@ -58,3 +58,4 @@ tauargus = "pytauargus.cli:main"
 cmake.version = ">=3.16"
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["src/pytauargus"]
+wheel.license-files = ["LICENCE", "NOTICE.txt", "SOURCE.txt", "THIRD_PARTY_NOTICES.txt", "LICENSES/*.txt"]

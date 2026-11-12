@@ -1,3 +1,8 @@
+# Copyright 2014 Statistics Netherlands (ported Tau-Argus implementation).
+# Copyright 2026 Trygve Tatsuya Falch (Python adaptation).
+# Distributed under EUPL-1.2; original EUPL 1.1 provenance: NOTICE.txt.
+# Licensing/attribution notice added 2026-11-12.
+
 """Legacy-compatible Tau-Argus ``.arb`` batch file parser.
 
 Faithful Python port of the grammar in ``src/tauargus/model/batch.java`` and
