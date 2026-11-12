@@ -105,12 +105,26 @@ def test_method_advice_marks_engine_unavailable_methods():
     assert by["Modular / HiTaS"]["available"] is True
     assert by["Controlled rounding"]["available"] is True
     assert by["Global recoding"]["available"] is True
-    # not yet implemented: hypercube (flat port pending), network, CTA
-    assert by["Hypercube / GHMITER"]["available"] is False
+    # hypercube: implemented for flat tables since 0.8.0
+    assert by["Hypercube / GHMITER"]["available"] is True
+    # not yet implemented: network, CTA
     assert by["Network"]["available"] is False
     assert by["Controlled tabular adjustment (CTA)"]["available"] is False
     assert out["available"] == [
-        "Global recoding", "Optimal", "Modular / HiTaS", "Controlled rounding"]
+        "Global recoding", "Optimal", "Modular / HiTaS",
+        "Hypercube / GHMITER", "Controlled rounding"]
+
+
+def test_method_advice_hypercube_notes_flat_table_scope():
+    # the shipped hypercube implementation covers flat tables; the advice
+    # must say so instead of promising hierarchical/linked/weighted support
+    out = server.method_advice(n_dimensions=6)
+    by = {m["method"]: m for m in out["methods"]}
+    gh = by["Hypercube / GHMITER"]
+    joined = " ".join(gh["cons"]).lower()
+    assert "flat" in joined
+    assert "hierarchical" in joined
+    assert "linked" in joined
 
 
 def test_method_advice_rejects_bad_dimension_count():

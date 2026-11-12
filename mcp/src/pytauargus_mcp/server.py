@@ -410,12 +410,14 @@ _METHODS = [
               "A full-table audit can still find narrow intervals"],
      "use": "A faster alternative for hierarchical tables."},
     {"method": "Hypercube / GHMITER",
-     "available": False,
+     "available": True,
      "pros": ["The documented route for 5- and 6-dimensional tables",
               "Supports linked table sets"],
      "cons": ["Heuristic; can over-suppress",
-              "Ignores the user's cost variable"],
-     "use": "Required when a table has five or six dimensions."},
+              "Ignores the user's cost variable",
+              "This build covers flat tables only: hierarchical, linked and "
+              "weighted tables are not yet supported"],
+     "use": "Required when a flat table has five or six dimensions."},
     {"method": "Network",
      "available": False,
      "pros": ["Fast network-flow heuristic",
@@ -499,15 +501,9 @@ def method_advice(n_dimensions: int,
         "use": m["use"],
     } for m in _METHODS]
     recommended = _recommend(n_dimensions, frequency)
-    if recommended is None:
-        note = ("No protection method is available for this table in this "
-                "build."
-                if n_dimensions < 5 else
-                "No protection method is available for this table in this "
-                "build: five- and six-dimensional tables need Hypercube / "
-                "GHMITER, which is not yet implemented.")
-    else:
-        note = ""
+    note = ("No protection method is available for this table in this "
+            "build."
+            if recommended is None else "")
     return {
         "n_dimensions": n_dimensions,
         "hierarchical": hierarchical,
@@ -634,12 +630,13 @@ classification detail. Not available for ready-made (pre-tabulated) tables.
 ## Availability in this build
 
 Not every method above is implemented by the current engine. Available now:
-**Optimal**, **Modular / HiTaS**, **Controlled rounding** and **Global
-recoding**. **Hypercube / GHMITER**, **Network** and **CTA** are documented in
-the manual but not yet implemented in this build; `tauargus_method_advice`
-marks them ``available: false`` and never recommends them. The "Choosing"
-list below is the manual's guidance, not a statement of what this build can
-run.
+**Optimal**, **Modular / HiTaS**, **Controlled rounding**, **Global
+recoding** and **Hypercube / GHMITER** for **flat** tables (its
+trade-offs list the flat-table scope). **Network** and **CTA** are
+documented in the manual but not yet implemented in this build;
+`tauargus_method_advice` marks unavailable methods ``available: false``
+and never recommends them. The "Choosing" list below is the manual's
+guidance; check ``available`` before offering a method.
 
 ## Choosing
 
