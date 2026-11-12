@@ -274,6 +274,65 @@ def test_audit_returns_reveal_structure(tmp_path):
 
 
 # ===========================================================================
+# tauargus_report (assess + protect + audit, rendered as markdown)
+# ===========================================================================
+
+def test_report_holds_when_audit_finds_reconstruction(tmp_path):
+    out = server.report(str(DATA / "examples" / "parquet" / "micro.parquet"),
+                        ["Sector", "Geo"], "Value",
+                        safety_rules="NK(1,80)", suppress="OPT(1)",
+                        workdir=str(tmp_path))
+    assert set(out) >= {"markdown", "verdict", "n_unsafe", "workdir", "files"}
+    # the 9-cell toy cannot hide its 90%-dominant cell: the audit must
+    # flag it, and the verdict must hold, not publish
+    assert out["verdict"] == "hold"
+    assert out["n_unsafe"] == 1
+    md = out["markdown"]
+    assert "# tau-ARGUS protection report" in md
+    assert "## Input" in md and "## Sensitive cells" in md
+    assert "## Suppression result" in md and "## Audit" in md
+    assert "## Verdict" in md
+    assert "NK(1,80)" in md
+    assert "Sector=Alpha, Geo=East" in md
+    assert "[30, 100]" in md
+    assert "**HOLD, do not publish.**" in md
+    assert out["files"]["arb"].endswith(".arb")
+
+
+def test_report_publishes_when_nothing_is_flagged(tmp_path):
+    # ZERO flags only zero-valued cells; MICRO has none, so the run
+    # suppresses nothing and the report must come back publish
+    out = server.report(MICRO, ["Region", "Size"], "Var2",
+                        safety_rules="ZERO(1)", suppress="OPT(1)",
+                        workdir=str(tmp_path))
+    assert out["verdict"] == "publish"
+    assert out["n_unsafe"] == 0
+    md = out["markdown"]
+    assert "**Publish.**" in md
+    assert "HOLD" not in md
+
+
+def test_suppress_text_maps_specs_to_method_names():
+    assert server._suppress_text("OPT(1)") == "Optimal (`OPT(1)`)"
+    assert server._suppress_text("MOD(1)") == "Modular / HiTaS (`MOD(1)`)"
+    assert server._suppress_text("GH") == "Hypercube / GHMITER (`GH`)"
+    assert server._suppress_text("RND") == "Controlled rounding (`RND`)"
+    # unknown spec: the raw spec, no invented name
+    assert server._suppress_text("FOO(1)") == "`FOO(1)`"
+
+
+def test_report_lists_method_and_rules_in_plain_words(tmp_path):
+    out = server.report(MICRO, ["Region", "Size"], "Var2",
+                        safety_rules="P(25,1)", suppress="OPT(1)",
+                        workdir=str(tmp_path))
+    md = out["markdown"]
+    assert "Optimal (`OPT(1)`)" in md
+    assert "P(25,1)" in md
+    # the P rule meaning in plain words
+    assert "p% dominance rule" in md
+
+
+# ===========================================================================
 # server construction and entry point
 # ===========================================================================
 
@@ -284,7 +343,8 @@ def test_server_constructs_with_tools():
     assert tools == {"tauargus_version", "tauargus_explore",
                      "tauargus_build_arb", "tauargus_run_arb",
                      "tauargus_protect", "tauargus_assess",
-                     "tauargus_audit", "tauargus_method_advice"}
+                     "tauargus_audit", "tauargus_report",
+                     "tauargus_method_advice"}
     assert callable(server.main)
 
 

@@ -18,7 +18,7 @@ with an MCP client backed by a local LLM.
 
 ## What it does
 
-Eight tools cover the workflow.
+Nine tools cover the workflow.
 
 - **`tauargus_version`** reports the `pytauargus` package version and the
   native engine version.
@@ -37,6 +37,12 @@ Eight tools cover the workflow.
   and secondary cells, and all produced file paths.
 - **`tauargus_audit`** audits the suppressed cells of a table computed
   by a batch and returns their realised feasibility intervals.
+- **`tauargus_report`** runs assess, protect and audit in one call and
+  renders the result as a markdown report: the data and table
+  specification, the rules and the method in plain words, the flagged
+  cells and why they are sensitive, the suppression result per cell,
+  the audit intervals of the suppressed cells, and a publish or hold
+  verdict.
 - **`tauargus_method_advice`** recommends a protection method for the
   table structure (dimensions, hierarchy, count response) and explains
   the trade-offs of the applicable alternatives. Each method is marked
@@ -101,7 +107,7 @@ the `PATH`; without one, use `uvx pytauargus-mcp` instead.
     "servers": {
       "tauargus": {
         "type": "local",
-        "command": ["tauargus-mcp"]
+        "command": ["uvx", "pytauargus-mcp"]
       }
     }
   }

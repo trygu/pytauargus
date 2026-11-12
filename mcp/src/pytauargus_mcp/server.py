@@ -366,6 +366,225 @@ def audit_table(arb_path: str, tab: int = 0) -> Dict[str, Any]:
 
 
 # ===========================================================================
+# Report: the assess, protect and audit flow rendered as a markdown
+# document (the disclosure-risk reporting loop of the protection
+# workflow, one self-contained call)
+# ===========================================================================
+
+# Plain names for the suppression spec prefixes (4.1 manual methods).
+_SUPPRESS_NAMES = {
+    "OPT": "Optimal",
+    "MOD": "Modular / HiTaS",
+    "GH": "Hypercube / GHMITER",
+    "NET": "Network",
+    "RND": "Controlled rounding",
+    "CTA": "Controlled tabular adjustment (CTA)",
+}
+
+
+def report(microdata: Union[str, Dict[str, List[Any]]],
+           tables: list, response: str,
+           safety_rules: str = "P(25,1)", suppress: str = "OPT(1)",
+           workdir: Optional[str] = None) -> Dict[str, Any]:
+    """Run assess, protect and audit and render a markdown report.
+
+    The inputs are those of :func:`protect_tables`. The report shows the
+    data and table specification, the safety rules and the suppression
+    method in plain words, the cells the rules flag and why, the
+    suppression result per cell, the audit's realized intervals for the
+    suppressed cells, and the verdict. The verdict is ``"hold"`` when an
+    audited cell can still be reconstructed from the published cells,
+    ``"publish"`` otherwise.
+    """
+    import datetime
+
+    specs = _validate_table_spec(microdata, tables, response)
+    explore = (explore_dataset(microdata)
+               if isinstance(microdata, str) else {})
+    assess = assess_table(microdata, tables, response,
+                          safety_rules=safety_rules)
+    protected = protect_tables(microdata, tables, response,
+                               safety_rules=safety_rules,
+                               suppress=suppress, workdir=workdir)
+    audits = [audit_table(protected["files"]["arb"], tab=i)
+              for i in range(protected["n_tables"])]
+    unsafe = [c for a in audits for c in a["cells"] if c["unsafe"]]
+    verdict = "hold" if unsafe else "publish"
+    md = _render_report(explore, assess, protected, audits, specs,
+                        response, safety_rules, suppress, verdict,
+                        datetime.date.today().isoformat())
+    return {"markdown": md, "verdict": verdict, "n_unsafe": len(unsafe),
+            "workdir": protected["workdir"], "files": protected["files"]}
+
+
+def _dims_text(dims: Dict[str, Any]) -> str:
+    """Render a ``{dim: value}`` cell as comma-separated ``Dim=value``."""
+    return ", ".join(f"{k}={str(v).strip()}" for k, v in dims.items())
+
+
+def _num(x: Any) -> str:
+    """Format a cell number: integral floats without the trailing .0."""
+    if isinstance(x, float) and x.is_integer():
+        return str(int(x))
+    return str(x)
+
+
+def _suppress_text(suppress: str) -> str:
+    """The plain method name behind a suppression spec like ``OPT(1)``."""
+    name = _SUPPRESS_NAMES.get(suppress.split("(")[0].strip().upper())
+    return f"{name} (`{suppress}`)" if name else f"`{suppress}`"
+
+
+def _render_report(explore: Dict[str, Any], assess: Dict[str, Any],
+                   protected: Dict[str, Any], audits: List[Dict[str, Any]],
+                   specs: List[List[str]], response: str,
+                   safety_rules: str, suppress: str,
+                   verdict: str, date: str) -> str:
+    v = version_info()
+    L: List[str] = []
+    L.append("# tau-ARGUS protection report")
+    L.append("")
+    L.append(f"_Generated {date} with pytauargus {v['pytauargus']} "
+             f"(engine {v['engine']})._")
+    L.append("")
+
+    L.append("## Input")
+    L.append("")
+    src = f"`{explore['path']}`" if explore.get("path") \
+        else "in-memory microdata"
+    if explore.get("n_rows") is not None:
+        src += f" ({explore['n_rows']} records)"
+    L.append(f"- **Data:** {src}")
+    if explore.get("variables"):
+        L.append("- **Variables:** "
+                 + ", ".join(f"{x['name']} ({x['type']})"
+                             for x in explore["variables"]))
+    for i, t in enumerate(protected["tables"]):
+        L.append(f"- **Table {i + 1}:** "
+                 + " x ".join(specs[i]) + f" on {response} "
+                 f"({t['n_cells']} cells)")
+    meanings = " and ".join(f"`{r['rule']}` ({r['meaning']})"
+                            for r in assess["rules"])
+    L.append(f"- **Safety rules:** {meanings}")
+    L.append(f"- **Suppression method:** {_suppress_text(suppress)}")
+    L.append("")
+
+    L.append("## Sensitive cells (before suppression)")
+    L.append("")
+    for i, t in enumerate(assess["tables"]):
+        flagged = [c for c in t["sensitive_cells"] if c["status"] == "U"]
+        empty = [c for c in t["sensitive_cells"] if c["status"] == "E"]
+        if not flagged and not empty:
+            L.append(f"_Table {i + 1}: no cell is flagged by the safety "
+                     "rules._")
+            L.append("")
+            continue
+        L.append(f"_Table {i + 1}: {len(flagged)} sensitive and "
+                 f"{len(empty)} empty of {t['n_cells']} cells._")
+        L.append("")
+        L.append("| Cell | Dimensions | Value | Contributors | "
+                 "Why sensitive |")
+        L.append("| --- | --- | --- | --- | --- |")
+        for c in sorted(t["sensitive_cells"], key=lambda c: c["cell"]):
+            L.append("| %d | %s | %s | %s | %s |" % (
+                c["cell"], _dims_text(c["dims"]), _num(c["value"]),
+                c["freq"], c["reason"]))
+        L.append("")
+
+    L.append("## Suppression result")
+    L.append("")
+    legend = status_legend()
+    for i, t in enumerate(protected["tables"]):
+        counts = t["status_counts"]
+        if set(counts) == {"S"}:
+            L.append(f"_Table {i + 1}: all {t['n_cells']} cells safe; "
+                     "nothing is withheld._")
+            L.append("")
+            continue
+        L.append(f"_Table {i + 1}: "
+                 + ", ".join(f"{n} {k}" for k, n in sorted(counts.items()))
+                 + " (S safe, U primary unsafe, M secondary, P protected, "
+                   "E empty)._")
+        L.append("")
+        withheld = sorted(t["unsafe_cells"] + t["secondary_cells"],
+                          key=lambda c: c["cell"])
+        if withheld:
+            L.append("| Cell | Dimensions | Value | Status |")
+            L.append("| --- | --- | --- | --- |")
+            for c in withheld:
+                L.append("| %d | %s | %s | %s: %s |" % (
+                    c["cell"], _dims_text(c["dims"]), _num(c["value"]),
+                    c["status"], legend[c["status"]]))
+            L.append("")
+
+    L.append("## Audit")
+    L.append("")
+    for i, a in enumerate(audits):
+        if not a["cells"]:
+            L.append(f"_Table {i + 1}: no cell was suppressed; nothing "
+                     "to audit._")
+            L.append("")
+            continue
+        L.append(f"_Table {i + 1}: {a['n_cells']} suppressed cells "
+                 "audited._")
+        L.append("")
+        L.append("| Cell | Value | Realized interval | Result |")
+        L.append("| --- | --- | --- | --- |")
+        for c in a["cells"]:
+            result = "**unsafe**" if c["unsafe"] else "safe"
+            L.append("| %d | %s | [%s, %s] | %s |" % (
+                c["cell"], _num(c["value"]), _num(c["min"]),
+                _num(c["max"]), result))
+        L.append("")
+    L.append("_The audit re-derives, from the published cells alone, what "
+             "an intruder can pin each suppressed value down to. A cell "
+             "fails when the margin is too small: its realized upper "
+             "bound lies within the upper protection limit of the value, "
+             "or the whole interval is narrower than the lower "
+             "protection limit._")
+    L.append("")
+
+    L.append("## Verdict")
+    L.append("")
+    if verdict == "hold":
+        dims_by_cell: Dict[int, str] = {}
+        for t in protected["tables"]:
+            for c in t["unsafe_cells"] + t["secondary_cells"]:
+                dims_by_cell.setdefault(c["cell"],
+                                        _dims_text(c["dims"]))
+        L.append("**HOLD, do not publish.** These suppressed cells can "
+                 "still be reconstructed from the published cells:")
+        L.append("")
+        for a in audits:
+            for c in a["cells"]:
+                if not c["unsafe"]:
+                    continue
+                where = dims_by_cell.get(c["cell"])
+                prefix = f"cell {c['cell']}" + \
+                    (f" ({where})" if where else "")
+                L.append(f"- {prefix}, value {_num(c['value'])}, realized "
+                         f"interval [{_num(c['min'])}, "
+                         f"{_num(c['max'])}]")
+        L.append("")
+        L.append("Publishing this table as it stands would let an "
+                 "intruder reconstruct those values; the protection is "
+                 "insufficient.")
+    else:
+        withheld = sum(len(t["unsafe_cells"]) + len(t["secondary_cells"])
+                       for t in protected["tables"])
+        if withheld == 0:
+            L.append("**Publish.** The safety rules flagged no sensitive "
+                     "cell, so nothing was withheld.")
+        else:
+            L.append(f"**Publish.** {withheld} cell"
+                     + ("" if withheld == 1 else "s")
+                     + " withheld, and the audit found no suppressed "
+                       "cell that the published cells can still reveal.")
+
+    return "\n".join(L) + "\n"
+
+
+# ===========================================================================
 # Consultant layer: the context an agent needs to advise a non-expert
 # ===========================================================================
 
@@ -853,6 +1072,29 @@ def tauargus_audit(arb_path: str, tab: int = 0) -> Dict[str, Any]:
     row per suppressed cell, empty when none are suppressed.
     """
     return audit_table(arb_path, tab)
+
+
+@mcp.tool()
+def tauargus_report(microdata: Union[str, Dict[str, List[Any]]],
+                    tables: list, response: str,
+                    safety_rules: str = "P(25,1)", suppress: str = "OPT(1)",
+                    workdir: Optional[str] = None) -> Dict[str, Any]:
+    """Run assess, protect and audit in one call and render the result
+    as a markdown report.
+
+    Same inputs as tauargus_protect. One call runs the full flow,
+    including the suppression solve, so on large or high-dimensional
+    tables it takes as long as tauargus_protect; use tauargus_assess
+    for the quick preview first. Returns the full markdown report (the
+    data and table specification, the rules and method in plain words,
+    the flagged cells and why, the suppression result per cell, the
+    audit intervals of the suppressed cells, and the verdict), the
+    ``verdict`` ("publish" or "hold"), the number of unsafe audited
+    cells, and the produced file paths.
+    """
+    return report(microdata, tables, response,
+                  safety_rules=safety_rules, suppress=suppress,
+                  workdir=workdir)
 
 
 @mcp.tool()
