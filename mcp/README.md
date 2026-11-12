@@ -18,7 +18,7 @@ with an MCP client backed by a local LLM.
 
 ## What it does
 
-Eight tools cover the workflow.
+Nine tools cover the workflow.
 
 - **`tauargus_version`** reports the `pytauargus` package version and the
   native engine version.
@@ -37,6 +37,24 @@ Eight tools cover the workflow.
   and secondary cells, and all produced file paths.
 - **`tauargus_audit`** audits the suppressed cells of a table computed
   by a batch and returns their realised feasibility intervals.
+- **`tauargus_report`** writes up this session as a markdown report:
+  the datasets explored, the method advice given, the assessments
+  (which cells the rules flag and why), the protection runs with their
+  rules and method in plain words and the cells withheld, the audit
+  intervals of the suppressed cells, and a publish or hold verdict per
+  run plus an overall one. Call it at the end of the work; pass
+  `path` to also save the report to a file.
+  The default report is an **internal working document**: it carries
+  the values of the suppressed cells, is for the statistician (who
+  holds access to the microdata) and is the process record the office
+  keeps of the protection. It must not be distributed; the
+  publication artifact is the table file, in which the suppressed
+  cells are blank. With `public=true` the tool renders the
+  **distribution copy**, for sharing the protection process with a
+  reviewer or data recipient: every suppressed value is redacted and
+  only what the published table already reveals remains: the cell
+  identities, the method, the cell counts, the audit intervals (which
+  are derivable from the published cells alone) and the verdict.
 - **`tauargus_method_advice`** recommends a protection method for the
   table structure (dimensions, hierarchy, count response) and explains
   the trade-offs of the applicable alternatives. Each method is marked
@@ -101,7 +119,7 @@ the `PATH`; without one, use `uvx pytauargus-mcp` instead.
     "servers": {
       "tauargus": {
         "type": "local",
-        "command": ["tauargus-mcp"]
+        "command": ["uvx", "pytauargus-mcp"]
       }
     }
   }

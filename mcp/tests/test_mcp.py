@@ -274,6 +274,100 @@ def test_audit_returns_reveal_structure(tmp_path):
 
 
 # ===========================================================================
+# tauargus_report (the session write-up)
+# ===========================================================================
+
+def test_report_empty_session():
+    server._session.clear()
+    out = server.tauargus_report()
+    assert out["verdict"] == "none"
+    assert "Nothing to report" in out["markdown"]
+
+
+def test_report_writes_up_the_session(tmp_path):
+    server._session.clear()
+    # a legacy batch on .asc/.rda files: the report must be able to
+    # write it up without any parquet or dict conversion
+    files = _files(tmp_path)
+    run = server.tauargus_run_arb(files["arb"])
+    assert run["suppress"] == ["OPT(1)"]
+    assert run["rules"]
+    audit = server.tauargus_audit(files["arb"], 0)
+    out = server.tauargus_report()
+    md = out["markdown"]
+    assert "# tau-ARGUS session report" in md
+    assert "## Data" in md
+    assert "No dataset was explored" in md
+    assert "## Protection runs" in md
+    assert "Optimal (`OPT(1)`)" in md
+    assert "P(25,1)" in md
+    assert "p% dominance rule" in md
+    assert "## Audit" in md
+    # the withheld cells of the batch run are in the report
+    withheld = [c for t in run["tables"] for c in t["withheld"]]
+    assert withheld  # every MICRO body cell is a single record
+    for c in withheld:
+        assert f"cell {c['cell']}" in md
+    # the overall verdict is consistent with the audit
+    expected = "hold" if any(c["unsafe"] for c in audit["cells"]) \
+        else "publish"
+    assert out["verdict"] == expected
+
+
+def test_report_notes_runs_without_audit(tmp_path):
+    server._session.clear()
+    files = _files(tmp_path)
+    server.tauargus_run_arb(files["arb"])
+    out = server.tauargus_report()
+    assert out["verdict"] == "not-audited"
+    assert "not audited" in out["markdown"]
+
+
+def test_report_public_copy_redacts_suppressed_values(tmp_path):
+    server._session.clear()
+    files = _files(tmp_path)
+    run = server.tauargus_run_arb(files["arb"])
+    server.tauargus_audit(files["arb"], 0)
+    withheld = [c for t in run["tables"] for c in t["withheld"]]
+    assert withheld
+    out = server.tauargus_report(public=True)
+    md = out["markdown"]
+    assert "Distribution copy" in md
+    assert "value [redacted]" in md
+    assert "| [redacted] |" in md
+    # no suppressed value leaks into the distribution copy, but the
+    # cell identities, the status counts and the audit intervals stay
+    for c in withheld:
+        v = server._num(c["value"])
+        assert f"value {v}" not in md
+        assert f"| {v} |" not in md
+    assert "## Verdict" in md
+    # the default (internal) copy still carries the values
+    internal = server.tauargus_report()["markdown"]
+    for c in withheld:
+        assert f"value {server._num(c['value'])}" in internal
+
+
+def test_report_writes_to_path(tmp_path):
+    server._session.clear()
+    files = _files(tmp_path)
+    server.tauargus_run_arb(files["arb"])
+    target = tmp_path / "report.md"
+    out = server.tauargus_report(str(target))
+    assert out["path"] == str(target)
+    assert target.read_text() == out["markdown"]
+
+
+def test_suppress_text_maps_specs_to_method_names():
+    assert server._suppress_text("OPT(1)") == "Optimal (`OPT(1)`)"
+    assert server._suppress_text("MOD(1)") == "Modular / HiTaS (`MOD(1)`)"
+    assert server._suppress_text("GH") == "Hypercube / GHMITER (`GH`)"
+    assert server._suppress_text("RND") == "Controlled rounding (`RND`)"
+    # unknown spec: the raw spec, no invented name
+    assert server._suppress_text("FOO(1)") == "`FOO(1)`"
+
+
+# ===========================================================================
 # server construction and entry point
 # ===========================================================================
 
@@ -284,7 +378,8 @@ def test_server_constructs_with_tools():
     assert tools == {"tauargus_version", "tauargus_explore",
                      "tauargus_build_arb", "tauargus_run_arb",
                      "tauargus_protect", "tauargus_assess",
-                     "tauargus_audit", "tauargus_method_advice"}
+                     "tauargus_audit", "tauargus_report",
+                     "tauargus_method_advice"}
     assert callable(server.main)
 
 
