@@ -20,8 +20,11 @@ The Python library and CLI are included in `pytauargus`. The TUI is the
 separate, optional `pytauargus-tui` package and uses the same engine.
 
 **Method support:** OPT, MOD and RND are implemented and regression-tested.
-CKM has a dispatch path without a dedicated end-to-end regression suite.
-GH, NET and CTA are rejected by the engine. See
+GH (hypercube) is implemented for flat, non-weighted tables and is
+regression-tested; tables with a hierarchical dimension are rejected, and
+linked or weighted tables are not yet supported. CKM has a dispatch path
+without a dedicated end-to-end regression suite. NET and CTA are rejected
+by the engine. See
 [protection, audit and compatibility](#protection-audit-and-compatibility)
 for the scope of validation and differences from legacy Tau-Argus.
 

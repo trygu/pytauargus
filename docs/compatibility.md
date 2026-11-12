@@ -3,8 +3,13 @@
 [README](../README.md) · [Python API](python-api.md) · [Batch files and CLI](batch-files.md)
 
 - **OPT, MOD and RND** are implemented and regression-tested.
+- **GH** (hypercube) is implemented for flat, non-weighted tables,
+  validated against the legacy gfortran oracle (4.1 section 2.8.1). Tables
+  with a hierarchical dimension are rejected up front; linked and weighted
+  tables are not yet supported. There is no solver in this path, so a GH
+  failure is an engine failure (`BatchError`), never a solver failure.
 - **CKM** has a dispatch path, but no dedicated end-to-end CKM regression suite.
-- **GH, NET and CTA** are rejected by the headless engine, even though the
+- **NET and CTA** are rejected by the headless engine, even though the
   parser/generators accept their legacy syntax.
 - **Suppression audit** runs in-process and has known-interval contract tests.
 
