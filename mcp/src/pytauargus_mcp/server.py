@@ -1,10 +1,11 @@
 """Model Context Protocol server: the agent front-end for tau-ARGUS.
 
 An LLM client drives the stateless engine over MCP, one tool call per
-task (the D2.6 agent front-end, ADR 0001). This is the first slice, the
-core loop: version, explore, build_arb, run_arb, protect, audit. The
-``.arb`` file is the state carrier of the batch flow; the server keeps
-no session.
+task (the D2.6 agent front-end, ADR 0001). The ``.arb`` file remains
+the state carrier of the batch flow and the server keeps no engine
+state. An in-memory session log (per server process, never persisted)
+records what the tools of this session did, so ``tauargus_report`` can
+write the whole session up as a markdown document.
 
 This package is a separate distribution that depends on pytauargus; it
 is the only place that imports ``mcp``. Start the server with the
@@ -13,6 +14,7 @@ is the only place that imports ``mcp``. Start the server with the
 
 from __future__ import annotations
 
+import datetime
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -59,8 +61,10 @@ def explore_dataset(microdata: str) -> Dict[str, Any]:
         variables = [{"name": name, "type": _parquet_column_type(vals)}
                      for name, vals in micro.items()]
         n_rows = len(next(iter(micro.values()))) if micro else 0
-        return {"path": str(path), "format": "parquet", "n_rows": n_rows,
-                "variables": variables}
+        res = {"path": str(path), "format": "parquet", "n_rows": n_rows,
+               "variables": variables}
+        _log("explore", **res)
+        return res
     if suffix == ".asc":
         rda = path.with_name(path.name[:-4] + ".rda")
     elif suffix == ".rda":
@@ -74,8 +78,10 @@ def explore_dataset(microdata: str) -> Dict[str, Any]:
     from pytauargus.engine import parse_rda
     meta = parse_rda(str(rda))
     variables = [{"name": v.name, "type": v.type} for v in meta.variables]
-    return {"path": str(path), "format": "rda", "rda": str(rda),
-            "variables": variables}
+    res = {"path": str(path), "format": "rda", "rda": str(rda),
+           "variables": variables}
+    _log("explore", **res)
+    return res
 
 
 def build_arb(asc_filename: str, rda_filename: str,
@@ -101,7 +107,12 @@ def build_arb(asc_filename: str, rda_filename: str,
                     output_names=output_names,
                     output_type=output_type,
                     output_options=output_options)
-    return {"arb": res["arb_filename"], "output_names": res["output_names"]}
+    out = {"arb": res["arb_filename"], "output_names": res["output_names"]}
+    _log("build_arb", **out,
+         explanatory_vars=list(explanatory_vars),
+         response_var=response_var, safety_rules=safety_rules,
+         suppress=suppress, weighted=weighted)
+    return out
 
 
 def _write_table_paths(arb_path: Path) -> List[Dict[str, Any]]:
@@ -118,16 +129,69 @@ def _write_table_paths(arb_path: Path) -> List[Dict[str, Any]]:
 
 
 def run_arb(arb_path: str) -> Dict[str, Any]:
-    """Run a ``.arb`` batch and report the table files it writes."""
+    """Run a ``.arb`` batch and report the table files it writes.
+
+    Each ``<WRITETABLE>`` target comes back with an ``exists`` flag
+    after the run, plus the per-table specification, status counts and
+    withheld cells read back from the table files (what the session
+    report renders). The batch's safety rules and suppression spec are
+    parsed out of the file.
+    """
+    from pytauargus.batch import (SafetyRule, SpecifyTable, Suppress,
+                                  WriteTable, parse_batch)
+    from pytauargus.engine import run_batch
+    from pytauargus.result import TableResult
+
     p = Path(arb_path)
     if not p.is_file():
         raise FileNotFoundError(f"batch file not found: {p}")
     tables = _write_table_paths(p)
-    from pytauargus.engine import Engine
-    Engine().run_batch(p)
+    parsed = parse_batch(str(p))
+    specs = [c for c in parsed if isinstance(c, SpecifyTable)]
+    writes = {w.tab_no: w for w in parsed if isinstance(w, WriteTable)}
+    rules = [f"{c.kind}({','.join(c.args)})"
+             for c in parsed if isinstance(c, SafetyRule)]
+    # the parenthesised number is the table number, as in the
+    # user-facing specs such as OPT(1)
+    suppress = [f"{c.kind}({','.join([str(c.tab_no)] + list(c.params))})"
+                for c in parsed if isinstance(c, Suppress)]
+    eng = run_batch(p)
     for entry in tables:
         entry["exists"] = Path(entry["path"]).is_file()
-    return {"arb": str(p), "tables": tables}
+        idx = entry["table"] - 1
+        wt = writes.get(entry["table"])
+        # TableResult reads the simple +SO layout only (what protect and
+        # assess write); other WRITETABLE formats are not read back. The
+        # options parse to a leading sign plus the code, e.g. "+SO".
+        simple = (wt is not None and wt.output_type == 5
+                  and any(o.lstrip("+-") == "SO" for o in wt.options))
+        if entry["exists"] and idx < len(specs) and simple:
+            spec = specs[idx]
+            t = TableResult(path=entry["path"], exp_vars=spec.exp_vars,
+                            response=spec.resp_var,
+                            statuses=eng.table_cell_statuses(idx))
+            rows = t.rows
+            statuses = t.status()
+            counts: Dict[str, int] = {}
+            for s in statuses:
+                counts[s] = counts.get(s, 0) + 1
+            withheld = []
+            for i, row in enumerate(rows):
+                if statuses[i] in ("U", "M"):
+                    withheld.append({"cell": i,
+                                     "value": row[spec.resp_var],
+                                     "status": statuses[i],
+                                     "dims": {d: row[d]
+                                              for d in spec.exp_vars}})
+            entry.update({"exp_vars": list(spec.exp_vars),
+                          "response": spec.resp_var,
+                          "n_cells": t.n_cells,
+                          "status_counts": counts,
+                          "withheld": withheld})
+    out = {"arb": str(p), "tables": tables,
+           "rules": rules, "suppress": suppress}
+    _log("run_arb", **out)
+    return out
 
 
 # Result diagnostic names reserved by the engine (see
@@ -257,9 +321,17 @@ def protect_tables(microdata: Union[str, Dict[str, List[Any]]],
             "columns": t.columns,
             "path": str(t.path) if t.path is not None else None,
         })
-    return {"workdir": res.workdir, "files": dict(res.files),
-            "n_tables": len(res.tables), "tables": out_tables,
-            "status_legend": status_legend()}
+    out = {"workdir": res.workdir, "files": dict(res.files),
+           "n_tables": len(res.tables), "tables": out_tables,
+           "status_legend": status_legend()}
+    _log("protect",
+         microdata=microdata if isinstance(microdata, str)
+         else f"<in-memory dict, {len(microdata)} columns>",
+         tables=specs, response=response,
+         safety_rules=safety_rules, suppress=suppress,
+         workdir=res.workdir, files=dict(res.files),
+         tables_result=out_tables)
+    return out
 
 
 def assess_table(microdata: Union[str, Dict[str, List[Any]]],
@@ -341,10 +413,15 @@ def assess_table(microdata: Union[str, Dict[str, List[Any]]],
             "columns": t.columns,
             "path": out,
         })
-    return {"workdir": str(wd), "files": files,
-            "n_tables": n, "tables": out_tables,
-            "rules": rule_meanings(rules),
-            "status_legend": status_legend()}
+    out = {"workdir": str(wd), "files": files,
+           "n_tables": n, "tables": out_tables,
+           "rules": rule_meanings(rules),
+           "status_legend": status_legend()}
+    _log("assess",
+         microdata=microdata if isinstance(microdata, str)
+         else f"<in-memory dict, {len(microdata)} columns>",
+         tables=tab_specs, response=response, rules=out["rules"])
+    return out
 
 
 def audit_table(arb_path: str, tab: int = 0) -> Dict[str, Any]:
@@ -361,14 +438,20 @@ def audit_table(arb_path: str, tab: int = 0) -> Dict[str, Any]:
     from pytauargus.engine import run_batch
     eng = run_batch(p)
     rows = eng.audit(tab)
-    return {"arb": str(p), "tab": tab, "n_cells": len(rows),
-            "cells": [dict(r) for r in rows]}
+    out = {"arb": str(p), "tab": tab, "n_cells": len(rows),
+           "cells": [dict(r) for r in rows]}
+    _log("audit", **out)
+    return out
 
 
 # ===========================================================================
-# Report: the assess, protect and audit flow rendered as a markdown
-# document (the disclosure-risk reporting loop of the protection
-# workflow, one self-contained call)
+# Session log and report: the write-up of what this session did
+#
+# The server process is started per client session (stdio) and keeps an
+# in-memory log of what its tools did. The log is never persisted and
+# carries no engine state; it exists so ``tauargus_report`` can write
+# the whole session up as a markdown document (the disclosure-risk
+# reporting loop of the protection workflow).
 # ===========================================================================
 
 # Plain names for the suppression spec prefixes (4.1 manual methods).
@@ -381,40 +464,45 @@ _SUPPRESS_NAMES = {
     "CTA": "Controlled tabular adjustment (CTA)",
 }
 
+# In-memory session log: one entry per tool call, in call order.
+_session: List[Dict[str, Any]] = []
 
-def report(microdata: Union[str, Dict[str, List[Any]]],
-           tables: list, response: str,
-           safety_rules: str = "P(25,1)", suppress: str = "OPT(1)",
-           workdir: Optional[str] = None) -> Dict[str, Any]:
-    """Run assess, protect and audit and render a markdown report.
 
-    The inputs are those of :func:`protect_tables`. The report shows the
-    data and table specification, the safety rules and the suppression
-    method in plain words, the cells the rules flag and why, the
-    suppression result per cell, the audit's realized intervals for the
-    suppressed cells, and the verdict. The verdict is ``"hold"`` when an
-    audited cell can still be reconstructed from the published cells,
-    ``"publish"`` otherwise.
+def _log(tool: str, **data: Any) -> None:
+    """Append one entry to the in-memory session log."""
+    _session.append({"tool": tool,
+                     "ts": datetime.datetime.now().isoformat(
+                         timespec="seconds"),
+                     **data})
+
+
+def report(path: Optional[str] = None) -> Dict[str, Any]:
+    """Write up this session as a markdown report.
+
+    Collects what the tools of this server process have done: the
+    datasets explored, the method advice given, the assessments (which
+    cells the rules flag and why), the protection runs (one-shot and
+    batch, with their rules and method in plain words and the cells
+    withheld), and the audits (the realized intervals of the suppressed
+    cells). Each protection run ends with a verdict, and the report ends
+    with an overall one: ``"hold"`` when an audited cell can still be
+    reconstructed from the published cells, ``"publish"`` when every
+    protection run is audited and clean, ``"not-audited"`` when a run
+    lacks its audit, ``"none"`` when nothing was run. When ``path`` is
+    given, the report is also written to that file.
     """
-    import datetime
-
-    specs = _validate_table_spec(microdata, tables, response)
-    explore = (explore_dataset(microdata)
-               if isinstance(microdata, str) else {})
-    assess = assess_table(microdata, tables, response,
-                          safety_rules=safety_rules)
-    protected = protect_tables(microdata, tables, response,
-                               safety_rules=safety_rules,
-                               suppress=suppress, workdir=workdir)
-    audits = [audit_table(protected["files"]["arb"], tab=i)
-              for i in range(protected["n_tables"])]
-    unsafe = [c for a in audits for c in a["cells"] if c["unsafe"]]
-    verdict = "hold" if unsafe else "publish"
-    md = _render_report(explore, assess, protected, audits, specs,
-                        response, safety_rules, suppress, verdict,
-                        datetime.date.today().isoformat())
-    return {"markdown": md, "verdict": verdict, "n_unsafe": len(unsafe),
-            "workdir": protected["workdir"], "files": protected["files"]}
+    if not _session:
+        md, verdict = _empty_report(), "none"
+    else:
+        md, verdict = _render_session(), _overall_verdict()
+    out: Dict[str, Any] = {"markdown": md, "verdict": verdict}
+    if path:
+        p = Path(path)
+        if not p.parent.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(md)
+        out["path"] = str(p)
+    return out
 
 
 def _dims_text(dims: Dict[str, Any]) -> str:
@@ -435,106 +523,189 @@ def _suppress_text(suppress: str) -> str:
     return f"{name} (`{suppress}`)" if name else f"`{suppress}`"
 
 
-def _render_report(explore: Dict[str, Any], assess: Dict[str, Any],
-                   protected: Dict[str, Any], audits: List[Dict[str, Any]],
-                   specs: List[List[str]], response: str,
-                   safety_rules: str, suppress: str,
-                   verdict: str, date: str) -> str:
+def _suppress_texts(specs: List[str]) -> str:
+    """Plain method names for a batch's per-table suppression specs."""
+    seen = []
+    for s in specs:
+        t = _suppress_text(s)
+        if t not in seen:
+            seen.append(t)
+    return ", ".join(seen) if seen else "?"
+
+
+def _empty_report() -> str:
     v = version_info()
+    return ("# tau-ARGUS session report\n\n"
+            f"_Generated {datetime.datetime.now():%Y-%m-%d %H:%M} with "
+            f"pytauargus {v['pytauargus']} (engine {v['engine']})._\n\n"
+            "_Nothing to report: no tool has been called in this "
+            "session yet._\n")
+
+
+def _run_arb_path(entry: Dict[str, Any]) -> str:
+    """The batch a protection-run log entry belongs to."""
+    if entry["tool"] == "protect":
+        return entry["files"]["arb"]
+    return entry["arb"]
+
+
+def _run_audit_entries(arb: str,
+                       audits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [a for a in audits if a["arb"] == arb]
+
+
+def _overall_verdict() -> str:
+    runs = [e for e in _session if e["tool"] in ("protect", "run_arb")]
+    if not runs:
+        return "none"
+    audits = [e for e in _session if e["tool"] == "audit"]
+    all_audited = True
+    for e in runs:
+        entries = _run_audit_entries(_run_arb_path(e), audits)
+        if not entries:
+            all_audited = False
+        elif any(c["unsafe"] for a in entries for c in a["cells"]):
+            return "hold"
+    return "publish" if all_audited else "not-audited"
+
+
+def _rules_plain(rules) -> str:
+    """Safety rule strings rendered with their plain meanings."""
+    if isinstance(rules, str):
+        rules = [rules]
+    return " and ".join(f"`{r['rule']}` ({r['meaning']})"
+                        for r in rule_meanings(rules))
+
+
+def _render_session() -> str:
+    v = version_info()
+    by_tool: Dict[str, List[Dict[str, Any]]] = {}
+    for e in _session:
+        by_tool.setdefault(e["tool"], []).append(e)
+    audits = by_tool.get("audit", [])
+    runs = [e for e in _session if e["tool"] in ("protect", "run_arb")]
+
     L: List[str] = []
-    L.append("# tau-ARGUS protection report")
+    L.append("# tau-ARGUS session report")
     L.append("")
-    L.append(f"_Generated {date} with pytauargus {v['pytauargus']} "
-             f"(engine {v['engine']})._")
-    L.append("")
-
-    L.append("## Input")
-    L.append("")
-    src = f"`{explore['path']}`" if explore.get("path") \
-        else "in-memory microdata"
-    if explore.get("n_rows") is not None:
-        src += f" ({explore['n_rows']} records)"
-    L.append(f"- **Data:** {src}")
-    if explore.get("variables"):
-        L.append("- **Variables:** "
-                 + ", ".join(f"{x['name']} ({x['type']})"
-                             for x in explore["variables"]))
-    for i, t in enumerate(protected["tables"]):
-        L.append(f"- **Table {i + 1}:** "
-                 + " x ".join(specs[i]) + f" on {response} "
-                 f"({t['n_cells']} cells)")
-    meanings = " and ".join(f"`{r['rule']}` ({r['meaning']})"
-                            for r in assess["rules"])
-    L.append(f"- **Safety rules:** {meanings}")
-    L.append(f"- **Suppression method:** {_suppress_text(suppress)}")
+    L.append(f"_Generated {datetime.datetime.now():%Y-%m-%d %H:%M} with "
+             f"pytauargus {v['pytauargus']} (engine {v['engine']})._")
     L.append("")
 
-    L.append("## Sensitive cells (before suppression)")
+    L.append("## Data")
     L.append("")
-    for i, t in enumerate(assess["tables"]):
-        flagged = [c for c in t["sensitive_cells"] if c["status"] == "U"]
-        empty = [c for c in t["sensitive_cells"] if c["status"] == "E"]
-        if not flagged and not empty:
-            L.append(f"_Table {i + 1}: no cell is flagged by the safety "
-                     "rules._")
-            L.append("")
-            continue
-        L.append(f"_Table {i + 1}: {len(flagged)} sensitive and "
-                 f"{len(empty)} empty of {t['n_cells']} cells._")
+    explores = by_tool.get("explore", [])
+    if not explores:
+        L.append("_No dataset was explored in this session._")
         L.append("")
-        L.append("| Cell | Dimensions | Value | Contributors | "
-                 "Why sensitive |")
-        L.append("| --- | --- | --- | --- | --- |")
-        for c in sorted(t["sensitive_cells"], key=lambda c: c["cell"]):
-            L.append("| %d | %s | %s | %s | %s |" % (
-                c["cell"], _dims_text(c["dims"]), _num(c["value"]),
-                c["freq"], c["reason"]))
-        L.append("")
-
-    L.append("## Suppression result")
+    for e in explores:
+        line = f"- `{e['path']}`"
+        if e.get("n_rows") is not None:
+            line += f" ({e['n_rows']} records)"
+        L.append(line)
+        if e.get("variables"):
+            L.append("  " + ", ".join(f"{x['name']} ({x['type']})"
+                                       for x in e["variables"]))
     L.append("")
+
+    L.append("## Method advice")
+    L.append("")
+    advices = by_tool.get("method_advice", [])
+    if not advices:
+        L.append("_No method advice was requested._")
+        L.append("")
+    for a in advices:
+        struct = (f"{a['n_dimensions']}-dimension"
+                  + (" hierarchical" if a["hierarchical"] else "")
+                  + (" count" if a["frequency"] else "") + " table")
+        if a.get("recommended"):
+            L.append(f"- {struct}: **{a['recommended']}** recommended")
+        else:
+            L.append(f"- {struct}: no available method fits "
+                     f"({a.get('recommended_note', 'none listed')})")
+        L.append("  - available: " + ", ".join(a["available"]))
+    L.append("")
+
+    L.append("## Assessment (safety rules, nothing withheld)")
+    L.append("")
+    assesses = by_tool.get("assess", [])
+    if not assesses:
+        L.append("_No assessment was run._")
+        L.append("")
+    for a in assesses:
+        L.append("- **Safety rules:** "
+                 + " and ".join(f"`{r['rule']}` ({r['meaning']})"
+                                for r in a["rules"]))
+        for i, t in enumerate(a["tables"]):
+            flagged = [c for c in t["sensitive_cells"]
+                       if c["status"] == "U"]
+            L.append(f"  - Table {i + 1} ({t['n_cells']} cells): "
+                     f"{len(flagged)} sensitive")
+            for c in flagged:
+                L.append(f"    - cell {c['cell']} "
+                         f"({_dims_text(c['dims'])}): value "
+                         f"{_num(c['value'])}, {c['reason']}")
+    L.append("")
+
+    L.append("## Protection runs")
+    L.append("")
+    if not runs:
+        L.append("_No protection was run._")
+        L.append("")
     legend = status_legend()
-    for i, t in enumerate(protected["tables"]):
-        counts = t["status_counts"]
-        if set(counts) == {"S"}:
-            L.append(f"_Table {i + 1}: all {t['n_cells']} cells safe; "
-                     "nothing is withheld._")
+    for k, e in enumerate(runs, 1):
+        if e["tool"] == "protect":
+            L.append(f"### Run {k} (one-shot protect)")
             L.append("")
-            continue
-        L.append(f"_Table {i + 1}: "
-                 + ", ".join(f"{n} {k}" for k, n in sorted(counts.items()))
-                 + " (S safe, U primary unsafe, M secondary, P protected, "
-                   "E empty)._")
+            spec_txt = "; ".join(" x ".join(s) + f" on {e['response']}"
+                                 for s in e["tables"])
+            L.append(f"- **Tables:** {spec_txt}")
+            L.append(f"- **Safety rules:** {_rules_plain(e['safety_rules'])}")
+            L.append(f"- **Suppression method:** "
+                     f"{_suppress_text(e['suppress'])}")
+            arb, tables = e["files"]["arb"], e["tables_result"]
+        else:
+            L.append(f"### Run {k} (batch `{e['arb']}`)")
+            L.append("")
+            L.append(f"- **Safety rules:** {_rules_plain(e.get('rules', []))}")
+            L.append(f"- **Suppression method:** "
+                     f"{_suppress_texts(e.get('suppress', []))}")
+            arb, tables = e["arb"], e["tables"]
+        for i, t in enumerate(tables):
+            if "n_cells" in t:
+                L.append(f"- **Table {i + 1}:** "
+                         + " x ".join(t.get("exp_vars", []))
+                         + f" on {t.get('response', '?')} "
+                         f"({t['n_cells']} cells): "
+                         + ", ".join(f"{n} {s}"
+                                     for s, n in sorted(
+                                         t["status_counts"].items())))
+                for c in t.get("withheld", []):
+                    L.append(f"  - cell {c['cell']} "
+                             f"({_dims_text(c['dims'])}), value "
+                             f"{_num(c['value'])} "
+                             f"({c['status']}: {legend[c['status']]})")
+            else:
+                L.append(f"- **Table {i + 1}:** written to `{t['path']}` "
+                         "(non-simple output format; the cells were not "
+                         "read back)")
         L.append("")
-        withheld = sorted(t["unsafe_cells"] + t["secondary_cells"],
-                          key=lambda c: c["cell"])
-        if withheld:
-            L.append("| Cell | Dimensions | Value | Status |")
-            L.append("| --- | --- | --- | --- |")
-            for c in withheld:
-                L.append("| %d | %s | %s | %s: %s |" % (
-                    c["cell"], _dims_text(c["dims"]), _num(c["value"]),
-                    c["status"], legend[c["status"]]))
-            L.append("")
 
     L.append("## Audit")
     L.append("")
-    for i, a in enumerate(audits):
-        if not a["cells"]:
-            L.append(f"_Table {i + 1}: no cell was suppressed; nothing "
-                     "to audit._")
-            L.append("")
-            continue
-        L.append(f"_Table {i + 1}: {a['n_cells']} suppressed cells "
-                 "audited._")
+    if not audits:
+        L.append("_No audit was run._")
         L.append("")
-        L.append("| Cell | Value | Realized interval | Result |")
-        L.append("| --- | --- | --- | --- |")
+    for a in audits:
+        L.append(f"- **{a['arb']}**, table {a['tab'] + 1}: "
+                 f"{a['n_cells']} suppressed cells audited")
+        L.append("")
+        L.append("  | Cell | Value | Realized interval | Result |")
+        L.append("  | --- | --- | --- | --- |")
         for c in a["cells"]:
             result = "**unsafe**" if c["unsafe"] else "safe"
-            L.append("| %d | %s | [%s, %s] | %s |" % (
-                c["cell"], _num(c["value"]), _num(c["min"]),
-                _num(c["max"]), result))
+            L.append(f"  | {c['cell']} | {_num(c['value'])} | "
+                     f"[{_num(c['min'])}, {_num(c['max'])}] | {result} |")
         L.append("")
     L.append("_The audit re-derives, from the published cells alone, what "
              "an intruder can pin each suppressed value down to. A cell "
@@ -546,42 +717,31 @@ def _render_report(explore: Dict[str, Any], assess: Dict[str, Any],
 
     L.append("## Verdict")
     L.append("")
-    if verdict == "hold":
-        dims_by_cell: Dict[int, str] = {}
-        for t in protected["tables"]:
-            for c in t["unsafe_cells"] + t["secondary_cells"]:
-                dims_by_cell.setdefault(c["cell"],
-                                        _dims_text(c["dims"]))
-        L.append("**HOLD, do not publish.** These suppressed cells can "
-                 "still be reconstructed from the published cells:")
+    if not runs:
+        L.append("_No protection run in this session._")
         L.append("")
-        for a in audits:
-            for c in a["cells"]:
-                if not c["unsafe"]:
-                    continue
-                where = dims_by_cell.get(c["cell"])
-                prefix = f"cell {c['cell']}" + \
-                    (f" ({where})" if where else "")
-                L.append(f"- {prefix}, value {_num(c['value'])}, realized "
-                         f"interval [{_num(c['min'])}, "
-                         f"{_num(c['max'])}]")
-        L.append("")
-        L.append("Publishing this table as it stands would let an "
-                 "intruder reconstruct those values; the protection is "
-                 "insufficient.")
-    else:
-        withheld = sum(len(t["unsafe_cells"]) + len(t["secondary_cells"])
-                       for t in protected["tables"])
-        if withheld == 0:
-            L.append("**Publish.** The safety rules flagged no sensitive "
-                     "cell, so nothing was withheld.")
+    for k, e in enumerate(runs, 1):
+        entries = _run_audit_entries(_run_arb_path(e), audits)
+        if not entries:
+            L.append(f"- **Run {k}:** not audited; the suppression has "
+                     "not been verified.")
+            continue
+        unsafe = [c for a in entries for c in a["cells"] if c["unsafe"]]
+        if unsafe:
+            L.append(f"- **Run {k}: HOLD.** {len(unsafe)} suppressed "
+                     "cell(s) can still be reconstructed from the "
+                     "published cells:")
+            for c in unsafe:
+                L.append(f"  - cell {c['cell']}, value "
+                         f"{_num(c['value'])}, realized interval "
+                         f"[{_num(c['min'])}, {_num(c['max'])}]")
         else:
-            L.append(f"**Publish.** {withheld} cell"
-                     + ("" if withheld == 1 else "s")
-                     + " withheld, and the audit found no suppressed "
-                       "cell that the published cells can still reveal.")
+            L.append(f"- **Run {k}: publish.** All suppressed cells "
+                     "pass the audit.")
+    L.append(f"_Overall: **{_overall_verdict()}**._")
+    L.append("")
 
-    return "\n".join(L) + "\n"
+    return "\n".join(L)
 
 
 # ===========================================================================
@@ -799,7 +959,7 @@ def method_advice(n_dimensions: int,
     note = ("No protection method is available for this table in this "
             "build."
             if recommended is None else "")
-    return {
+    out = {
         "n_dimensions": n_dimensions,
         "hierarchical": hierarchical,
         "frequency": frequency,
@@ -808,6 +968,11 @@ def method_advice(n_dimensions: int,
         "available": [m["method"] for m in _METHODS if m["available"]],
         "methods": methods,
     }
+    _log("method_advice", n_dimensions=n_dimensions,
+         hierarchical=hierarchical, frequency=frequency,
+         recommended=recommended, recommended_note=note,
+         available=out["available"])
+    return out
 
 
 # Agent-facing context sent at MCP initialization: the consultant workflow,
@@ -1075,26 +1240,23 @@ def tauargus_audit(arb_path: str, tab: int = 0) -> Dict[str, Any]:
 
 
 @mcp.tool()
-def tauargus_report(microdata: Union[str, Dict[str, List[Any]]],
-                    tables: list, response: str,
-                    safety_rules: str = "P(25,1)", suppress: str = "OPT(1)",
-                    workdir: Optional[str] = None) -> Dict[str, Any]:
-    """Run assess, protect and audit in one call and render the result
-    as a markdown report.
+def tauargus_report(path: Optional[str] = None) -> Dict[str, Any]:
+    """Write up this session as a markdown report.
 
-    Same inputs as tauargus_protect. One call runs the full flow,
-    including the suppression solve, so on large or high-dimensional
-    tables it takes as long as tauargus_protect; use tauargus_assess
-    for the quick preview first. Returns the full markdown report (the
-    data and table specification, the rules and method in plain words,
-    the flagged cells and why, the suppression result per cell, the
-    audit intervals of the suppressed cells, and the verdict), the
-    ``verdict`` ("publish" or "hold"), the number of unsafe audited
-    cells, and the produced file paths.
+    Collects what the tools of this server process have done so far:
+    the datasets explored, the method advice given, the assessments
+    (which cells the rules flag and why), the protection runs (one-shot
+    and batch, with their rules and method in plain words and the cells
+    withheld), and the audits (the realized intervals of the suppressed
+    cells). Each protection run ends with a verdict and the report with
+    an overall one: "hold" when an audited cell can still be
+    reconstructed from the published cells, "publish" when every run
+    is audited and clean, "not-audited" when a run lacks its audit.
+    Call it at the end of the work. When ``path`` is given, the report
+    is also written to that file. Returns the markdown and the overall
+    verdict.
     """
-    return report(microdata, tables, response,
-                  safety_rules=safety_rules, suppress=suppress,
-                  workdir=workdir)
+    return report(path)
 
 
 @mcp.tool()

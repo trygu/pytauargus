@@ -274,42 +274,63 @@ def test_audit_returns_reveal_structure(tmp_path):
 
 
 # ===========================================================================
-# tauargus_report (assess + protect + audit, rendered as markdown)
+# tauargus_report (the session write-up)
 # ===========================================================================
 
-def test_report_holds_when_audit_finds_reconstruction(tmp_path):
-    out = server.report(str(DATA / "examples" / "parquet" / "micro.parquet"),
-                        ["Sector", "Geo"], "Value",
-                        safety_rules="NK(1,80)", suppress="OPT(1)",
-                        workdir=str(tmp_path))
-    assert set(out) >= {"markdown", "verdict", "n_unsafe", "workdir", "files"}
-    # the 9-cell toy cannot hide its 90%-dominant cell: the audit must
-    # flag it, and the verdict must hold, not publish
-    assert out["verdict"] == "hold"
-    assert out["n_unsafe"] == 1
-    md = out["markdown"]
-    assert "# tau-ARGUS protection report" in md
-    assert "## Input" in md and "## Sensitive cells" in md
-    assert "## Suppression result" in md and "## Audit" in md
-    assert "## Verdict" in md
-    assert "NK(1,80)" in md
-    assert "Sector=Alpha, Geo=East" in md
-    assert "[30, 100]" in md
-    assert "**HOLD, do not publish.**" in md
-    assert out["files"]["arb"].endswith(".arb")
+def test_report_empty_session():
+    server._session.clear()
+    out = server.tauargus_report()
+    assert out["verdict"] == "none"
+    assert "Nothing to report" in out["markdown"]
 
 
-def test_report_publishes_when_nothing_is_flagged(tmp_path):
-    # ZERO flags only zero-valued cells; MICRO has none, so the run
-    # suppresses nothing and the report must come back publish
-    out = server.report(MICRO, ["Region", "Size"], "Var2",
-                        safety_rules="ZERO(1)", suppress="OPT(1)",
-                        workdir=str(tmp_path))
-    assert out["verdict"] == "publish"
-    assert out["n_unsafe"] == 0
+def test_report_writes_up_the_session(tmp_path):
+    server._session.clear()
+    # a legacy batch on .asc/.rda files: the report must be able to
+    # write it up without any parquet or dict conversion
+    files = _files(tmp_path)
+    run = server.tauargus_run_arb(files["arb"])
+    assert run["suppress"] == ["OPT(1)"]
+    assert run["rules"]
+    audit = server.tauargus_audit(files["arb"], 0)
+    out = server.tauargus_report()
     md = out["markdown"]
-    assert "**Publish.**" in md
-    assert "HOLD" not in md
+    assert "# tau-ARGUS session report" in md
+    assert "## Data" in md
+    assert "No dataset was explored" in md
+    assert "## Protection runs" in md
+    assert "Optimal (`OPT(1)`)" in md
+    assert "P(25,1)" in md
+    assert "p% dominance rule" in md
+    assert "## Audit" in md
+    # the withheld cells of the batch run are in the report
+    withheld = [c for t in run["tables"] for c in t["withheld"]]
+    assert withheld  # every MICRO body cell is a single record
+    for c in withheld:
+        assert f"cell {c['cell']}" in md
+    # the overall verdict is consistent with the audit
+    expected = "hold" if any(c["unsafe"] for c in audit["cells"]) \
+        else "publish"
+    assert out["verdict"] == expected
+
+
+def test_report_notes_runs_without_audit(tmp_path):
+    server._session.clear()
+    files = _files(tmp_path)
+    server.tauargus_run_arb(files["arb"])
+    out = server.tauargus_report()
+    assert out["verdict"] == "not-audited"
+    assert "not audited" in out["markdown"]
+
+
+def test_report_writes_to_path(tmp_path):
+    server._session.clear()
+    files = _files(tmp_path)
+    server.tauargus_run_arb(files["arb"])
+    target = tmp_path / "report.md"
+    out = server.tauargus_report(str(target))
+    assert out["path"] == str(target)
+    assert target.read_text() == out["markdown"]
 
 
 def test_suppress_text_maps_specs_to_method_names():
@@ -319,17 +340,6 @@ def test_suppress_text_maps_specs_to_method_names():
     assert server._suppress_text("RND") == "Controlled rounding (`RND`)"
     # unknown spec: the raw spec, no invented name
     assert server._suppress_text("FOO(1)") == "`FOO(1)`"
-
-
-def test_report_lists_method_and_rules_in_plain_words(tmp_path):
-    out = server.report(MICRO, ["Region", "Size"], "Var2",
-                        safety_rules="P(25,1)", suppress="OPT(1)",
-                        workdir=str(tmp_path))
-    md = out["markdown"]
-    assert "Optimal (`OPT(1)`)" in md
-    assert "P(25,1)" in md
-    # the P rule meaning in plain words
-    assert "p% dominance rule" in md
 
 
 # ===========================================================================
