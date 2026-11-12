@@ -198,6 +198,64 @@ def test_protect_missing_parquet_raises(tmp_path):
 
 
 # ===========================================================================
+# tables/response validation at the MCP boundary
+# ===========================================================================
+
+def test_protect_unknown_table_var_lists_available_columns():
+    with pytest.raises(ValueError) as exc:
+        server.tauargus_protect(MICRO, ["Region", "Bogus"], "Var2")
+    msg = str(exc.value)
+    assert "Bogus" in msg
+    # the available columns are listed so the caller can self-correct
+    for col in ("Region", "Size", "Var2"):
+        assert col in msg
+
+
+def test_protect_multi_table_unknown_var():
+    with pytest.raises(ValueError, match="Bogus"):
+        server.tauargus_protect(MICRO, [["Region"], ["Bogus"]], "Var2")
+
+
+def test_protect_unknown_response_lists_available_columns():
+    with pytest.raises(ValueError) as exc:
+        server.tauargus_protect(MICRO, ["Region"], "Nope")
+    msg = str(exc.value)
+    assert "Nope" in msg
+    assert "Var2" in msg
+
+
+def test_protect_tables_must_be_a_list():
+    with pytest.raises(TypeError, match="tables"):
+        server.tauargus_protect(MICRO, "Region", "Var2")
+
+
+def test_protect_empty_tables_rejected():
+    with pytest.raises(ValueError, match="tables"):
+        server.tauargus_protect(MICRO, [], "Var2")
+
+
+def test_protect_response_already_in_table_rejected():
+    with pytest.raises(ValueError, match="Var2"):
+        server.tauargus_protect(MICRO, ["Region", "Var2"], "Var2")
+
+
+def test_protect_reserved_column_name_rejected():
+    # "freq" is a result diagnostic name (see _validate_columns)
+    with pytest.raises(ValueError, match="freq"):
+        server.tauargus_protect(MICRO, ["Region", "freq"], "Var2")
+
+
+def test_assess_unknown_table_var():
+    with pytest.raises(ValueError, match="Bogus"):
+        server.tauargus_assess(MICRO, ["Region", "Bogus"], "Var2")
+
+
+def test_assess_tables_must_be_a_list():
+    with pytest.raises(TypeError, match="tables"):
+        server.tauargus_assess(MICRO, "Region", "Var2")
+
+
+# ===========================================================================
 # tauargus_audit (native run, small fixture)
 # ===========================================================================
 
