@@ -1869,6 +1869,54 @@ class Engine:
                 if k == -1:
                     done = True
 
+    def table_cell_statuses(self, tab: int,
+                            suppress_empty: bool = False) -> List[int]:
+        """The numeric ``CS_*`` status per cell of ``tab``, in the same
+        row-major order that :meth:`write_intermediate_table` emits.
+
+        Attaches the reason behind each cell's status symbol (the
+        primary-unsafe codes 3-9 in particular) to a
+        :class:`pytauargus.result.TableResult` parsed from the matching
+        ``.tab`` file. ``suppress_empty`` mirrors the writer's skip of empty
+        cells; keep it consistent with how the file was written.
+        """
+        if not self._metadata:
+            raise BatchError("No metadata.")
+        if tab < 0 or tab >= len(self._tables):
+            raise BatchError(f"Table {tab + 1} out of range.")
+        spec, _srs = self._tables[tab]
+        meta = self._metadata
+        tau = self._tau
+        exp_vars = [meta.index_of(n) for n in spec.exp_vars]
+        n_exp = len(exp_vars)
+        if n_exp == 0:
+            # A table with no explanatory dims is a single cell; the writer
+            # records it with an unknown status.
+            return [CS_UNKNOWN]
+        max_dim: List[int] = []
+        for vi in exp_vars:
+            _, _n_codes, n_active = tau.get_var_number_of_codes(vi)
+            max_dim.append(n_active)
+        statuses: List[int] = []
+        dim_array = [0] * n_exp
+        done = False
+        while not done:
+            result = tau.get_table_cell(tab, dim_array, 0)
+            st = CS_EMPTY if len(result) < 3 else result[10]
+            if not (st == CS_EMPTY and suppress_empty):
+                statuses.append(st)
+            k = n_exp - 1
+            while k >= 0:
+                dim_array[k] += 1
+                if dim_array[k] < max_dim[k]:
+                    break
+                dim_array[k] = 0
+                k -= 1
+            if k == -1:
+                done = True
+        return statuses
+
+
     def write_table(self, cmd: WriteTable) -> None:
         """Write a table to file."""
         tab = cmd.tab_no - 1

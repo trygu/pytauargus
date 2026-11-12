@@ -226,3 +226,58 @@ def test_repr():
     tr = TableResult.from_rows(rows, ["X"], "Val")
     assert "n_cells=1" in repr(tr)
     assert "Val" in repr(tr)
+
+
+# ===========================================================================
+# reason() — the per-cell explanation behind the status symbol
+# ===========================================================================
+def _reason_rows(symbol_by_idx):
+    """One magnitude row per entry; ``symbol_by_idx`` is idx -> status symbol."""
+    return [{"X": f"A{i}", "Y": f"B{i}", "Val": float(i + 1),
+             "freq": 1, "cost": 1.0, "status": sym,
+             "lower": 0.0, "upper": 0.0}
+            for i, sym in enumerate(symbol_by_idx)]
+
+
+def test_reason_maps_numeric_statuses_to_specific_reasons():
+    # 3/5/7/9 are the primary-unsafe reasons; 11 secondary; 14 empty; 1 safe.
+    r = TableResult.from_rows(
+        _reason_rows(["U", "U", "U", "U", "M", "E", "S"]),
+        ["X", "Y"], "Val", statuses=[3, 5, 7, 9, 11, 14, 1])
+    assert r.reason() == [
+        "unsafe (safety rule)",
+        "unsafe (frequency)",
+        "unsafe (singleton)",
+        "unsafe (manual)",
+        "secondary unsafe",
+        "empty (structural)",
+        "safe",
+    ]
+
+
+def test_reason_exposes_numeric_statuses():
+    r = TableResult.from_rows(_reason_rows(["U", "S"]), ["X", "Y"], "Val",
+                              statuses=[3, 1])
+    assert r.statuses() == [3, 1]
+    # a fresh copy each call, so callers cannot mutate the internal list
+    assert r.statuses() is not r.statuses()
+
+
+def test_reason_falls_back_to_symbols_without_statuses():
+    r = TableResult.from_rows(
+        _reason_rows(["U", "M", "S", "E", "P"]), ["X", "Y"], "Val")
+    assert r.reason() == ["unsafe", "secondary unsafe", "safe", "empty",
+                          "manually protected"]
+    assert r.statuses() is None
+
+
+def test_reason_unknown_numeric_code_falls_back_to_symbol():
+    r = TableResult.from_rows(_reason_rows(["U"]), ["X", "Y"], "Val",
+                              statuses=[99])
+    assert r.reason() == ["unsafe"]  # code 99 not in the map -> symbol U
+
+
+def test_reason_rejects_status_length_mismatch():
+    with pytest.raises(ValueError, match="statuses"):
+        TableResult.from_rows(_reason_rows(["U", "S"]), ["X", "Y"], "Val",
+                              statuses=[3])

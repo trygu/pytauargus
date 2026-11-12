@@ -32,11 +32,15 @@ Eight tools cover the workflow.
   by a batch and returns their realised feasibility intervals.
 - **`tauargus_method_advice`** recommends a protection method for the
   table structure (dimensions, hierarchy, weights) and explains the
-  trade-offs of the applicable alternatives.
+  trade-offs of the applicable alternatives. Each method is marked
+  `available` when this build implements it; a method the engine cannot
+  run is never recommended, and the result says so.
 - **`tauargus_assess`** runs the safety rules without suppressing and
-  returns the cells the rules flag, with their values and contributor
-  counts, plus the applied rules in plain words. It previews what a
-  protection run would withhold, so it runs first.
+  returns the cells the rules flag, with their values, contributor
+  counts and the plain-language reason each is sensitive (safety rule,
+  frequency, singleton, zero, manual, ...), plus the applied rules in
+  plain words. It previews what a protection run would withhold, so it
+  runs first.
 
 The server runs on the stdio transport.
 
