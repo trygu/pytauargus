@@ -15,9 +15,11 @@ both, so no separate engine or licensed solver is needed.
 | [Python library](#python-library) | Protect DataFrames or Parquet data in Python; generate inputs or run existing batches | `from pytauargus import protect` |
 | [Command-line interface](#command-line-interface) | Automate Parquet protection or run legacy `.arb` batches in scripts and pipelines | `tauargus` |
 | [Interactive terminal UI](#interactive-terminal-ui) | Inspect tables, mark cells and preview suppression or rounding interactively | `tauargus-tui` |
+| [MCP server](#mcp-server) | Let an AI assistant explore the data, protect the tables and report the session over the Model Context Protocol | `tauargus-mcp` |
 
 The Python library and CLI are included in `pytauargus`. The TUI is the
-separate, optional `pytauargus-tui` package and uses the same engine.
+separate, optional `pytauargus-tui` package and the MCP server is the
+separate, optional `pytauargus-mcp` package; both use the same engine.
 
 **Method support:** OPT, MOD and RND are implemented and regression-tested.
 GH (hypercube) is implemented for flat, non-weighted tables and is
@@ -44,10 +46,12 @@ Choose extras for the workflows you need:
 | Pandas examples and DataFrame output | `pip install --upgrade "pytauargus[dataframe]"` |
 | Parquet files and cloud URLs, in Python or the CLI | `pip install --upgrade "pytauargus[parquet]"` |
 | Interactive terminal UI | `pip install --upgrade "pytauargus[tui]"` |
+| MCP server for AI assistants | `pip install --upgrade "pytauargus[mcp]"` |
 
 Extras can be combined, for example `pip install "pytauargus[dataframe,parquet,tui]"`.
-The TUI can also be installed directly with `pip install pytauargus-tui`;
-this installs `pytauargus` and its CLI too.
+The TUI can also be installed directly with `pip install pytauargus-tui` and
+the MCP server with `pip install pytauargus-mcp`; each installs
+`pytauargus` and its CLI too.
 
 Wheels are available for Python 3.11–3.15 on macOS arm64, Linux x86_64 and
 aarch64 (glibc 2.28+), and Windows x64. For other platforms, see
@@ -232,6 +236,45 @@ See the [TUI overview](https://github.com/trygu/pytauargus/blob/master/tui/READM
 for capabilities and limitations, and the
 [full user guide](https://github.com/trygu/pytauargus/blob/master/docs/tui.md)
 for keys, statuses, workspaces and replay.
+
+## MCP server
+
+`pytauargus-mcp` is a Model Context Protocol server for AI assistants such
+as OpenCode or Claude Desktop. Point the assistant at a microdata file and
+it explores the variables, advises on a protection method, assesses which
+cells the safety rules flag, protects the tables and writes up the session
+as a markdown report with a publish or hold verdict.
+
+The server is a thin wrapper over the `pytauargus` API and runs locally on
+stdio: the microdata and the results stay on the machine that hosts it, and
+it makes no network calls.
+
+Install the `mcp` extra, or run it with `uvx` without installing anything:
+
+```bash
+pip install "pytauargus[mcp]"     # gives the tauargus-mcp command
+uvx pytauargus-mcp                # try it without installing
+```
+
+Add a `tauargus` server to your MCP client, for example in Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "tauargus": { "command": "tauargus-mcp" }
+  }
+}
+```
+
+Nine tools cover the workflow: version, explore, build and run `.arb`
+batches, protect, audit, assess, method advice, and the session report.
+The report defaults to an internal working document that carries the
+suppressed values; with `public=true` it renders a distribution copy with
+every suppressed value redacted.
+
+See the [MCP server README](https://github.com/trygu/pytauargus/blob/master/mcp/README.md)
+for the tool list, client configuration examples and the method-advice
+basis.
 
 ## Protection, audit and compatibility
 
