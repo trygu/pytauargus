@@ -130,21 +130,104 @@ def run_arb(arb_path: str) -> Dict[str, Any]:
     return {"arb": str(p), "tables": tables}
 
 
+# Result diagnostic names reserved by the engine (see
+# ``pytauargus.result._validate_columns``); a source column must not use one.
+_TABLE_RESERVED = ("cost", "freq", "lower", "status", "upper")
+
+
+def _validate_table_spec(microdata, tables, response) -> List[List[str]]:
+    """Validate ``tables`` and ``response`` before any engine work.
+
+    Returns the per-table variable names (the canonical list-of-lists
+    shape). An MCP client gets a clear, self-correcting error naming the
+    offending variable and the available columns, instead of an obscure
+    failure deep in the native engine. Accepts the same shapes as
+    :func:`pytauargus.protect.protect`: a flat list of variable names
+    (one table) or a list of per-table lists (several tables).
+    """
+    from pytauargus.dataframe import to_microdata
+
+    if isinstance(microdata, str):
+        mp = Path(microdata)
+        if not mp.is_file():
+            raise FileNotFoundError(f"microdata file not found: {mp}")
+        if mp.suffix.lower() != ".parquet":
+            raise ValueError(
+                f"unsupported microdata format {mp.suffix!r} "
+                "(expected a .parquet path or a dict of column to list)")
+        columns = list(to_microdata(str(mp)))
+    else:
+        columns = list(to_microdata(microdata))
+
+    if not isinstance(tables, (list, tuple)):
+        raise TypeError(
+            "tables must be a list: a flat list of variable names for one "
+            'table (e.g. ["Region", "Size"]) or a list of per-table lists '
+            'for several tables (e.g. [["Region"], ["Size"]]); '
+            f"got {type(tables).__name__}")
+    if not tables:
+        raise ValueError(
+            "tables must name at least one explanatory variable "
+            "(a flat list of names, or a list of per-table lists)")
+    if all(isinstance(t, str) for t in tables):
+        specs = [list(tables)]
+    else:
+        specs = []
+        for t in tables:
+            if isinstance(t, str):
+                specs.append([t])
+            elif isinstance(t, (list, tuple)) and t and all(
+                    isinstance(v, str) for v in t):
+                specs.append(list(t))
+            else:
+                raise TypeError(
+                    "each table must be a non-empty list of variable "
+                    f"names; got {t!r}")
+    if any(not spec for spec in specs):
+        raise ValueError("every table must name at least one variable")
+
+    names = [v for spec in specs for v in spec]
+    bad = sorted({v for v in names if v not in columns})
+    if bad:
+        raise ValueError(
+            f"unknown table variable(s) {', '.join(repr(v) for v in bad)}; "
+            f"available columns: {', '.join(columns)}")
+    reserved = sorted({v for v in names if v in _TABLE_RESERVED})
+    if reserved:
+        raise ValueError(
+            f"table variable(s) {', '.join(reserved)} use a reserved "
+            "diagnostic name "
+            f"({', '.join(_TABLE_RESERVED)}); rename the source column")
+    if not isinstance(response, str) or response not in columns:
+        raise ValueError(
+            f"unknown response variable {response!r}; "
+            f"available columns: {', '.join(columns)}")
+    if response in _TABLE_RESERVED:
+        raise ValueError(
+            f"response {response!r} uses a reserved diagnostic name; "
+            "rename the source column")
+    if any(response in spec for spec in specs):
+        raise ValueError(
+            f"the response {response!r} cannot also be a table variable")
+    return specs
+
+
 def protect_tables(microdata: Union[str, Dict[str, List[Any]]],
                    tables: list, response: str,
                    safety_rules: str = "P(25,1)", suppress: str = "OPT(1)",
                    workdir: Optional[str] = None) -> Dict[str, Any]:
     """One-shot protection (wraps :func:`pytauargus.protect`).
 
-    Returns per-table cell counts, status counts, the unsafe (``U``)
-    and secondary (``M``) cells, and all produced file paths.
+    ``tables`` is a flat list of explanatory variable names (one table)
+    or a list of per-table lists (several tables); ``response`` is a
+    numeric column. Variable and response names are validated against
+    the microdata columns before the engine runs. Returns per-table cell
+    counts, status counts, the unsafe (``U``) and secondary (``M``)
+    cells, and all produced file paths.
     """
     from pytauargus.protect import protect
-    if isinstance(microdata, str):
-        mp = Path(microdata)
-        if not mp.is_file():
-            raise FileNotFoundError(f"microdata file not found: {mp}")
-    res = protect(microdata, tables, response,
+    specs = _validate_table_spec(microdata, tables, response)
+    res = protect(microdata, specs, response,
                   safety_rules=safety_rules, suppress=suppress,
                   workdir=workdir)
     out_tables: List[Dict[str, Any]] = []
@@ -201,15 +284,8 @@ def assess_table(microdata: Union[str, Dict[str, List[Any]]],
     from pytauargus.engine import run_batch
     from pytauargus.result import TableResult
 
-    if isinstance(microdata, str):
-        mp = Path(microdata)
-        if not mp.is_file():
-            raise FileNotFoundError(f"microdata file not found: {mp}")
+    tab_specs = _validate_table_spec(microdata, tables, response)
     micro = to_microdata(microdata)
-    if all(isinstance(t, str) for t in tables):
-        tab_specs = [list(tables)]
-    else:
-        tab_specs = [list(t) for t in tables]
     n = len(tab_specs)
 
     if workdir is None:
@@ -736,8 +812,11 @@ def tauargus_protect(microdata: Union[str, Dict[str, List[Any]]],
     ``microdata`` is a ``.parquet`` path or a dict of column to value
     lists. ``tables`` is a flat list of explanatory variables (one
     table) or a list of per-table lists. ``response`` names the numeric
-    response column. Returns per-table cell counts, status counts, the
-    unsafe and secondary cells, and all produced file paths.
+    response column. The variable and response names are validated
+    against the microdata columns before the engine runs, with the
+    available columns named in the error. Returns per-table cell
+    counts, status counts, the unsafe and secondary cells, and all
+    produced file paths.
     """
     return protect_tables(microdata, tables, response,
                           safety_rules=safety_rules, suppress=suppress,
@@ -751,13 +830,14 @@ def tauargus_assess(microdata: Union[str, Dict[str, List[Any]]],
                     workdir: Optional[str] = None) -> Dict[str, Any]:
     """Run the safety rules without suppressing: what is sensitive, and why.
 
-    Same inputs as tauargus_protect except the suppression spec. Returns,
-    per table, the cells the rules flag (``U`` sensitive, ``E`` empty) with
-    their value, contributor count and the plain-language reason each is
-    sensitive (safety rule, frequency, singleton, zero, manual, ...), the
-    applied rules explained in plain words, and the status legend. Nothing is
-    withheld, so the statistician sees exactly what a protection would act on
-    before it happens.
+    Same inputs as tauargus_protect except the suppression spec; the
+    variable and response names are validated the same way. Returns,
+    per table, the cells the rules flag (``U`` sensitive, ``E`` empty)
+    with their value, contributor count and the plain-language reason
+    each is sensitive (safety rule, frequency, singleton, zero,
+    manual, ...), the applied rules explained in plain words, and the
+    status legend. Nothing is withheld, so the statistician sees
+    exactly what a protection would act on before it happens.
     """
     return assess_table(microdata, tables, response,
                         safety_rules=safety_rules, workdir=workdir)

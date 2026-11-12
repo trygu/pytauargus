@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from pytauargus.batch import Suppress
-from pytauargus.engine import run_batch
+from pytauargus.engine import BatchError, run_batch
 
 from conftest import DATA
 
@@ -132,3 +132,36 @@ class TestRNDSuppress:
             assert "too small" in str(e)
         else:
             raise AssertionError("Expected BatchError for base below minimum")
+
+
+# ===================================================================
+# GH (hypercube secondary suppression via the in-process ghm library)
+# ===================================================================
+
+
+class TestGHSuppress:
+    def test_gh_marks_secondary_cells(self):
+        """GH covers each primary-unsafe cell with a hypercube and marks the
+        remaining corners as secondary on a flat table."""
+        eng = run_batch(DATA / "TestGhFlat.arb")
+        tau = eng._tau
+        tab = 0
+        assert count_unsafe(tau, tab) > 0, "Test requires an unsafe (primary) cell"
+        before = count_secondary(tau, tab)
+
+        eng.suppress(Suppress(kind="GH", tab_no=tab + 1))
+
+        after = count_secondary(tau, tab)
+        assert after > before, f"GH should add secondary cells ({before} -> {after})"
+
+    def test_gh_rejects_hierarchical_table(self, engine):
+        """GH must not run the flat algorithm on a table with a hierarchical
+        dimension; it raises a BatchError instead. TestRecode.arb table 1 is
+        Size x Region, and Region is hierarchical."""
+        tab = 0
+        try:
+            engine.suppress(Suppress(kind="GH", tab_no=tab + 1))
+        except BatchError as e:
+            assert "hierarchical" in str(e)
+        else:
+            raise AssertionError("Expected BatchError for a hierarchical table")
