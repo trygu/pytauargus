@@ -709,6 +709,7 @@ class Engine:
         self._work_dir: Path = Path.cwd()
         self._rounded_tables: set = set()  # indices of tables marked rounded (RND)
         self._ckm_tables: set = set()  # indices of tables marked cell-key protected
+        self._gh_tables: set = set()  # indices of tables protected by GH (hypercube)
         self._protect_cover_table: bool = False  # legacy <COVER> global flag
         # Cell audit (intervalle) results: tab index -> {cell: (min, max, unsafe)}
         self._audit: Dict[int, Dict[int, Tuple[float, float, bool]]] = {}
@@ -1362,9 +1363,11 @@ class Engine:
             self._suppress_rnd(tab, cmd)
         elif kind == "CKM":
             self._suppress_ckm(tab, cmd)
+        elif kind == "GH":
+            self._suppress_gh(tab, cmd)
         else:
             raise BatchError(f"Suppress method '{kind}' not supported in headless mode "
-                             f"(GH/NET/CTA require external executables).")
+                             f"(NET/CTA require external executables).")
 
     def _table_cell_bounds(self, tab: int) -> Tuple[float, float]:
         """Return (min, max) finite cell value of ``tab`` (Java minTabVal/maxTabVal)."""
@@ -1549,6 +1552,72 @@ class Engine:
                                  f"for {cmd.ckm_p_table_cont}")
             logger.info("CKM cont: table %d processed.", tab + 1)
         self._ckm_tables.add(tab)
+
+    def _suppress_gh(self, tab: int, cmd: Suppress) -> None:
+        """Run GH (hypercube) secondary suppression on ``tab``.
+
+        Write the steering and cells files, run the ghm library in process,
+        and read the secondaries back. There is no solver in this path, so a
+        failure is an engine failure (BatchError, exit 3), never a solver
+        failure (ADR 0002). Only the flat, non-weighted table shape is
+        ported (4.1 section 2.8.1, validated against the gfortran oracle).
+        A table with a hierarchical dimension is rejected up front (see
+        ``_gh_require_flat``); linked and weighted tables are not yet
+        supported.
+        """
+        import os
+        import tempfile
+
+        is_singleton = bool(cmd.gh_singleton)
+        with tempfile.TemporaryDirectory() as tmp:
+            stuer = os.path.join(tmp, "gh_stuer.txt")
+            eingabe = os.path.join(tmp, "gh_eingabe.txt")
+            ausgabe = os.path.join(tmp, "gh_ausgabe.txt")
+            rc = self._tau.write_ghmiter_stuer(stuer, "0.0 0.0", "1 1 1", tab)
+            if rc != 1:
+                raise BatchError(
+                    f"WriteGHMITERSteuer failed (code {rc}) for table {tab + 1}")
+            self._gh_require_flat(stuer, tab)
+            rc = self._tau.write_ghmiter_data_cell(eingabe, tab, is_singleton)
+            if rc != 1:
+                raise BatchError(
+                    f"WriteGHMITERDataCell failed (code {rc}) for table {tab + 1}")
+            code, n_sec, msg = self._tau.run_ghmiter(stuer, eingabe, ausgabe)
+            if code != 0:
+                raise BatchError(
+                    f"GHMITER failed (code {code}) for table {tab + 1}: {msg}")
+            code, n_set = self._tau.set_secondary_ghmiter(ausgabe, tab, is_singleton)
+            if code != 1:
+                raise BatchError(
+                    f"SetSecondaryGHMITER failed (code {code}) for table {tab + 1}")
+        self._gh_tables.add(tab)
+        logger.info("GH suppress: table %d: %d secondary cells.", tab + 1, n_set)
+
+    @staticmethod
+    def _gh_require_flat(stuer: str, tab: int) -> None:
+        """Reject a table with a hierarchical dimension.
+
+        The ported flat hypercube algorithm (4.1 section 2.8.1) is validated
+        only for tables where every dimension is flat, i.e. individual codes
+        plus a single total (``ms == 2`` on line 4 of the steering file). A
+        hierarchical dimension (``ms > 2``) would feed the flat grid a
+        subtotal it does not understand, so reject it rather than risk a
+        wrong suppression.
+        """
+        with open(stuer, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        if len(lines) < 4:
+            raise BatchError(
+                f"GH hypercube: malformed steering file for table {tab + 1}")
+        try:
+            ms_vals = [int(x) for x in lines[3].split()]
+        except ValueError:
+            raise BatchError(
+                f"GH hypercube: malformed steering ms line for table {tab + 1}")
+        if any(ms > 2 for ms in ms_vals):
+            raise BatchError(
+                f"GH hypercube: table {tab + 1} has a hierarchical dimension; "
+                f"only flat tables are supported by this port")
 
     # -- audit -----------------------------------------------------------------
     def audit(self, tab: int) -> List[dict]:
@@ -2317,6 +2386,7 @@ class Engine:
         self._safety_rules_buf = []
         self._rounded_tables = set()
         self._ckm_tables = set()
+        self._gh_tables = set()
         self._protect_cover_table = False
         self._audit = {}
 
@@ -2368,6 +2438,7 @@ class Engine:
             self._metadata = None
             self._rounded_tables = set()
             self._ckm_tables = set()
+            self._gh_tables = set()
             self._protect_cover_table = False
             self._audit = {}
             logger.info("Cleared state.")
