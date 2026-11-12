@@ -1,3 +1,8 @@
+# Copyright 2014 Statistics Netherlands (ported Tau-Argus implementation).
+# Copyright 2026 Trygve Tatsuya Falch (Python adaptation).
+# Distributed under EUPL-1.2; original EUPL 1.1 provenance: NOTICE.txt.
+# Licensing/attribution notice added 2026-11-12.
+
 """High-level Tau-Argus engine driving the native C++ bindings.
 
 Usage:

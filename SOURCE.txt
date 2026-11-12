@@ -1,0 +1,34 @@
+Source code for pytauargus distributions
+========================================
+Copyright holders and component licences are listed in NOTICE.txt and
+THIRD_PARTY_NOTICES.txt.
+
+Python package and CLI: https://github.com/trygu/pytauargus
+Native engine and C++/Python bindings: https://github.com/trygu/tauargus-engine
+Native components:
+  core:      https://github.com/trygu/libtauargus
+  CSP:       https://github.com/trygu/CSP
+  CRP:       https://github.com/trygu/CRP
+  HiTaS:     https://github.com/trygu/tauhitas
+  rounder:   https://github.com/trygu/taurounder
+  hypercube: https://github.com/trygu/hypercube
+HiGHS solver: https://github.com/ERGO-Code/HiGHS
+
+For a released wheel, the corresponding release's release-manifest.json
+records product_commit, engine_sha and highs_version:
+https://github.com/trygu/pytauargus/releases
+
+Check out product_commit in pytauargus and run:
+  git submodule update --init --recursive
+
+The engine gitlink pins tauargus-engine; its nested gitlinks pin the six
+native repositories. Obtain HiGHS at highs_version. Build instructions are
+in docs/development.md and .github/workflows/wheels.yml at product_commit.
+For a source checkout, use its recorded gitlinks and engine/HiGHS-VERSION.
+GitHub's non-recursive source archives alone are not a substitute for
+obtaining the nested component source.
+
+The maintainers provide these freely accessible repositories and retain the
+corresponding source revisions for as long as the covered distributions
+continue to be distributed or communicated, in accordance with EUPL
+Articles 3 and 5.

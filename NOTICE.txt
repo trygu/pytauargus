@@ -1,0 +1,45 @@
+pytauargus: copyright and licence notice
+
+Copyright 2026 Trygve Tatsuya Falch (original Python code and adaptations).
+Copyright 2014 Statistics Netherlands (Tau-Argus implementation and Python ports).
+Copyright 2021 Institut National de la Statistique et des Etudes Economiques
+  (rtauargus code adapted into the Python metadata, batch and hierarchy writers).
+
+pytauargus, its CLI and its original Python adaptations are distributed under
+EUPL-1.2; see LICENCE. The C++ binding/native code and the legacy Java code
+translated into Python originate from EUPL-covered Tau-Argus components.
+Original EUPL 1.1 notices are retained; the distribution uses EUPL 1.2 under
+Article 5's later-version permission. See LICENSES/EUPL-1.1.txt.
+
+In particular src/pytauargus/batch.py ports the Java batch parser/tokenizer;
+src/pytauargus/engine.py includes ports of TableSet, OptiSuppress and APriori
+methods. Original Java source: https://github.com/sdcTools/tauargus
+The adaptations in arb.py, rda.py, hrc.py and micro.py build on MIT-licensed
+rtauargus: https://github.com/InseeFrLab/rtauargus
+The INSEE copyright and MIT permission are preserved in LICENSES/INSEE-MIT.txt.
+
+Separately identified third-party components retain their original licences;
+this EUPL statement does not remove their copyright, permission or notice
+requirements. See THIRD_PARTY_NOTICES.txt and LICENSES/.
+
+Source code and access to exact release revisions: see SOURCE.txt.
+Licensing/attribution clarification recorded 2026-11-12. The Git history and
+source comments document earlier adaptations; this date does not claim that
+all source modifications were made on this date.
+
+CSP historical header ambiguity
+-------------------------------
+Fifteen source files, including src/Cspmain.c, retain the 2001 wording
+"to be used only inside tau-ARGUS". The upstream sdcTools/CSP project added
+an EUPL 1.1 grant to its README on 2016-06-24:
+https://github.com/sdcTools/CSP/commit/c370c044a2fe1ae0130e5d19dc3f31436bafa863
+https://github.com/sdcTools/CSP/blob/9305d4c7802bac60c98c2dc69653c5c99b643184/README.md
+
+This fork relies on that upstream EUPL grant as its distribution basis.
+The earlier wording is inconsistent with the unrestricted-purpose grant
+in Article 2 of standard EUPL 1.1. A stale header is a plausible explanation,
+but the fork maintainer has not received rights-holder confirmation
+resolving the inconsistency as of 2026-11-12. Adding LICENCE does not itself
+resolve the upstream authorship/permission question. The historical
+headers have therefore been preserved and this ambiguity is disclosed.
+Discussion: https://github.com/trygu/pytauargus/issues/26
