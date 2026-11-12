@@ -11,6 +11,11 @@ backgrounded by the client. It is a thin wrapper over the `pytauargus`
 Python API; it re-implements no engine behaviour. Installing it also
 gives you the `pytauargus` package and the `tauargus` CLI.
 
+The server runs locally on stdio: the microdata, the protection run
+and the results stay on the machine that hosts it, and the server makes
+no network calls. You can run it air-gapped, for example in a datacenter
+with an MCP client backed by a local LLM.
+
 ## What it does
 
 Eight tools cover the workflow.
@@ -25,16 +30,20 @@ Eight tools cover the workflow.
 - **`tauargus_run_arb`** runs a `.arb` batch and reports the table files
   it writes.
 - **`tauargus_protect`** protects one or more tables from microdata in a
-  single call (wraps `protect`). It returns per-table cell counts,
-  status counts, the unsafe and secondary cells, and all produced file
-  paths.
+  single call (wraps `protect`). The suppression method is selectable
+  through the `suppress` spec (default `OPT(1)`); hypercube (`GH`)
+  secondary suppression runs in this build for flat, non-weighted
+  tables. It returns per-table cell counts, status counts, the unsafe
+  and secondary cells, and all produced file paths.
 - **`tauargus_audit`** audits the suppressed cells of a table computed
   by a batch and returns their realised feasibility intervals.
 - **`tauargus_method_advice`** recommends a protection method for the
-  table structure (dimensions, hierarchy, weights) and explains the
-  trade-offs of the applicable alternatives. Each method is marked
+  table structure (dimensions, hierarchy, count response) and explains
+  the trade-offs of the applicable alternatives. Each method is marked
   `available` when this build implements it; a method the engine cannot
-  run is never recommended, and the result says so.
+  run is never recommended, and the result says so. This build marks
+  global recoding, optimal, modular (HiTaS), hypercube (flat tables)
+  and controlled rounding as available; network and CTA are not.
 - **`tauargus_assess`** runs the safety rules without suppressing and
   returns the cells the rules flag, with their values, contributor
   counts and the plain-language reason each is sensitive (safety rule,
