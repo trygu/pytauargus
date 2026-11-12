@@ -17,7 +17,10 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 dependencies = [
-    "pytauargus==0.8.0",
+    # The parquet extra: the server reads .parquet microdata directly
+    # (README promise), so pyarrow must come with the install rather
+    # than as a client-side --with.
+    "pytauargus[parquet]==0.8.0",
     "mcp<2",
 ]
 
