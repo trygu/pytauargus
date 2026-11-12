@@ -48,7 +48,7 @@ moving or archiving a workflow.
 | `<SAFETYRULE>` | Sensitivity rules, e.g. `P(p,n)`, `NK(n,k)`, `FREQ(min,safety)` |
 | `<READMICRODATA>` / `<READTABLE>` | Build or read the tables |
 | `<RECODE>` | Recode a variable, e.g. via a `.grc` file |
-| `<SUPPRESS>` | Implemented and regression-tested: `MOD`, `OPT`, `RND`; `CKM` has limited validation. Legacy `GH`, `NET`, `CTA` syntax is parsed but execution is rejected |
+| `<SUPPRESS>` | Implemented and regression-tested: `MOD`, `OPT`, `RND`; `GH` (hypercube) is implemented for flat, non-weighted tables, tables with a hierarchical dimension are rejected; `CKM` has limited validation. Legacy `NET` and `CTA` syntax is parsed but execution is rejected |
 | `<WRITETABLE>` | Export: `(TabNo,Type,Options,"file")`; implemented types: 1 CSV, 2 pivot CSV, 3 code/value, 4 SBS, 5 intermediate; 6 JJ and 7 CKM are rejected |
 | `<SOLVER>` | Accepted for compatibility; only HiGHS is used. Other names log a warning |
 | `<LOGBOOK>` | Write a log file |
