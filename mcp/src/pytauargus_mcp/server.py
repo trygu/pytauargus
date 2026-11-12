@@ -476,7 +476,8 @@ def _log(tool: str, **data: Any) -> None:
                      **data})
 
 
-def report(path: Optional[str] = None) -> Dict[str, Any]:
+def report(path: Optional[str] = None,
+           public: bool = False) -> Dict[str, Any]:
     """Write up this session as a markdown report.
 
     Collects what the tools of this server process have done: the
@@ -488,13 +489,21 @@ def report(path: Optional[str] = None) -> Dict[str, Any]:
     with an overall one: ``"hold"`` when an audited cell can still be
     reconstructed from the published cells, ``"publish"`` when every
     protection run is audited and clean, ``"not-audited"`` when a run
-    lacks its audit, ``"none"`` when nothing was run. When ``path`` is
-    given, the report is also written to that file.
+    lacks its audit, ``"none"`` when nothing was run.
+
+    The default report is an internal working document: it carries the
+    values of the suppressed cells and is for the statistician, who
+    holds access to the microdata. With ``public=True`` it renders the
+    distribution copy, in which every suppressed value is redacted and
+    only what the published table already reveals remains (the cell
+    identities, the method, the counts, the audit intervals and the
+    verdict). When ``path`` is given, the report is also written to
+    that file.
     """
     if not _session:
         md, verdict = _empty_report(), "none"
     else:
-        md, verdict = _render_session(), _overall_verdict()
+        md, verdict = _render_session(redact=public), _overall_verdict()
     out: Dict[str, Any] = {"markdown": md, "verdict": verdict}
     if path:
         p = Path(path)
@@ -533,11 +542,29 @@ def _suppress_texts(specs: List[str]) -> str:
     return ", ".join(seen) if seen else "?"
 
 
+# The report carries the values of the suppressed cells, so it is a
+# working document for the statistician (who holds access to the
+# microdata), never the publication artifact.
+_INTERNAL_NOTE = (
+    "> **Internal working document.** This report contains the values "
+    "of the suppressed cells and the intervals an audit derived for "
+    "them. Do not distribute it: the publication artifact is the "
+    "table file, in which the suppressed cells are blank.\n\n")
+
+_DISTRIBUTION_NOTE = (
+    "> **Distribution copy.** Every suppressed value is redacted in "
+    "this copy. What remains is what the published table already "
+    "reveals: the cell identities, the method, the cell counts and the "
+    "audit intervals. The full report with the values is an internal "
+    "working document for the statistician.\n\n")
+
+
 def _empty_report() -> str:
     v = version_info()
     return ("# tau-ARGUS session report\n\n"
             f"_Generated {datetime.datetime.now():%Y-%m-%d %H:%M} with "
             f"pytauargus {v['pytauargus']} (engine {v['engine']})._\n\n"
+            + _INTERNAL_NOTE +
             "_Nothing to report: no tool has been called in this "
             "session yet._\n")
 
@@ -577,19 +604,26 @@ def _rules_plain(rules) -> str:
                         for r in rule_meanings(rules))
 
 
-def _render_session() -> str:
+def _render_session(redact: bool = False) -> str:
     v = version_info()
     by_tool: Dict[str, List[Dict[str, Any]]] = {}
     for e in _session:
         by_tool.setdefault(e["tool"], []).append(e)
     audits = by_tool.get("audit", [])
     runs = [e for e in _session if e["tool"] in ("protect", "run_arb")]
+    # the distribution copy redacts the suppressed values; everything
+    # else (identities, counts, intervals) is what the published table
+    # already reveals
+    val = (lambda x: "[redacted]") if redact else _num
 
     L: List[str] = []
     L.append("# tau-ARGUS session report")
     L.append("")
     L.append(f"_Generated {datetime.datetime.now():%Y-%m-%d %H:%M} with "
              f"pytauargus {v['pytauargus']} (engine {v['engine']})._")
+    L.append("")
+    note = _DISTRIBUTION_NOTE if redact else _INTERNAL_NOTE
+    L.append(note.rstrip("\n"))
     L.append("")
 
     L.append("## Data")
@@ -644,7 +678,7 @@ def _render_session() -> str:
             for c in flagged:
                 L.append(f"    - cell {c['cell']} "
                          f"({_dims_text(c['dims'])}): value "
-                         f"{_num(c['value'])}, {c['reason']}")
+                         f"{val(c['value'])}, {c['reason']}")
     L.append("")
 
     L.append("## Protection runs")
@@ -683,7 +717,7 @@ def _render_session() -> str:
                 for c in t.get("withheld", []):
                     L.append(f"  - cell {c['cell']} "
                              f"({_dims_text(c['dims'])}), value "
-                             f"{_num(c['value'])} "
+                             f"{val(c['value'])} "
                              f"({c['status']}: {legend[c['status']]})")
             else:
                 L.append(f"- **Table {i + 1}:** written to `{t['path']}` "
@@ -704,7 +738,7 @@ def _render_session() -> str:
         L.append("  | --- | --- | --- | --- |")
         for c in a["cells"]:
             result = "**unsafe**" if c["unsafe"] else "safe"
-            L.append(f"  | {c['cell']} | {_num(c['value'])} | "
+            L.append(f"  | {c['cell']} | {val(c['value'])} | "
                      f"[{_num(c['min'])}, {_num(c['max'])}] | {result} |")
         L.append("")
     L.append("_The audit re-derives, from the published cells alone, what "
@@ -733,7 +767,7 @@ def _render_session() -> str:
                      "published cells:")
             for c in unsafe:
                 L.append(f"  - cell {c['cell']}, value "
-                         f"{_num(c['value'])}, realized interval "
+                         f"{val(c['value'])}, realized interval "
                          f"[{_num(c['min'])}, {_num(c['max'])}]")
         else:
             L.append(f"- **Run {k}: publish.** All suppressed cells "
@@ -1240,7 +1274,8 @@ def tauargus_audit(arb_path: str, tab: int = 0) -> Dict[str, Any]:
 
 
 @mcp.tool()
-def tauargus_report(path: Optional[str] = None) -> Dict[str, Any]:
+def tauargus_report(path: Optional[str] = None,
+                    public: bool = False) -> Dict[str, Any]:
     """Write up this session as a markdown report.
 
     Collects what the tools of this server process have done so far:
@@ -1253,10 +1288,17 @@ def tauargus_report(path: Optional[str] = None) -> Dict[str, Any]:
     reconstructed from the published cells, "publish" when every run
     is audited and clean, "not-audited" when a run lacks its audit.
     Call it at the end of the work. When ``path`` is given, the report
-    is also written to that file. Returns the markdown and the overall
-    verdict.
+    is also written to that file.
+
+    By default the report is an internal working document: it carries
+    the values of the suppressed cells and is for the statistician,
+    who holds access to the microdata. With ``public=True`` it renders
+    the distribution copy, in which every suppressed value is redacted
+    and only what the published table already reveals remains (the
+    cell identities, the method, the counts, the audit intervals and
+    the verdict). Returns the markdown and the overall verdict.
     """
-    return report(path)
+    return report(path, public=public)
 
 
 @mcp.tool()

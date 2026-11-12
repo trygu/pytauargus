@@ -323,6 +323,31 @@ def test_report_notes_runs_without_audit(tmp_path):
     assert "not audited" in out["markdown"]
 
 
+def test_report_public_copy_redacts_suppressed_values(tmp_path):
+    server._session.clear()
+    files = _files(tmp_path)
+    run = server.tauargus_run_arb(files["arb"])
+    server.tauargus_audit(files["arb"], 0)
+    withheld = [c for t in run["tables"] for c in t["withheld"]]
+    assert withheld
+    out = server.tauargus_report(public=True)
+    md = out["markdown"]
+    assert "Distribution copy" in md
+    assert "value [redacted]" in md
+    assert "| [redacted] |" in md
+    # no suppressed value leaks into the distribution copy, but the
+    # cell identities, the status counts and the audit intervals stay
+    for c in withheld:
+        v = server._num(c["value"])
+        assert f"value {v}" not in md
+        assert f"| {v} |" not in md
+    assert "## Verdict" in md
+    # the default (internal) copy still carries the values
+    internal = server.tauargus_report()["markdown"]
+    for c in withheld:
+        assert f"value {server._num(c['value'])}" in internal
+
+
 def test_report_writes_to_path(tmp_path):
     server._session.clear()
     files = _files(tmp_path)
