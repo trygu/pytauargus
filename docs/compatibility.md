@@ -3,10 +3,15 @@
 [README](../README.md) · [Python API](python-api.md) · [Batch files and CLI](batch-files.md)
 
 - **OPT, MOD and RND** are implemented and regression-tested.
-- **GH** (hypercube) is implemented for flat, non-weighted tables,
-  validated against the legacy gfortran oracle (4.1 section 2.8.1). Tables
-  with a hierarchical dimension are rejected up front; linked and weighted
-  tables are not yet supported. There is no solver in this path, so a GH
+- **GH** (hypercube) implements the exact-reconstruction criterion for flat,
+  non-weighted, nonnegative tables. Selected flat cases are compared with the
+  legacy gfortran oracle (4.1 section 2.8.1); this is not full GHMITER parity.
+  It does not enforce the requested lower/upper protection intervals: audit
+  the result against those requirements before publication. Zero cells cannot
+  be hypercube corners; GH fails if no feasible nonzero cube exists.
+  Hierarchies and non-default apriori percentage, model size or singleton
+  options are rejected. Use `GH(1)` or `GH(1,0,0,0)` for table 1. Linked and
+  weighted tables are not supported. There is no solver in this path, so a GH
   failure is an engine failure (`BatchError`), never a solver failure.
 - **CKM** has a dispatch path, but no dedicated end-to-end CKM regression suite.
 - **NET and CTA** are rejected by the headless engine, even though the
