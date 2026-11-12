@@ -41,13 +41,20 @@ def test_method_advice_small_table_recommends_optimal():
     assert by["Network"]["applies"] is False  # needs a hierarchy too
 
 
-def test_method_advice_high_dim_recommends_hypercube():
+def test_method_advice_high_dim_recommendation_tracks_gh_availability():
+    # Five/six-dim tables point at Hypercube; the recommendation honours
+    # whether this build actually implements it.
     out = server.method_advice(n_dimensions=6)
-    assert out["recommended"] == "Hypercube / GHMITER"
     by = {m["method"]: m for m in out["methods"]}
+    gh = by["Hypercube / GHMITER"]
+    assert gh["applies"] is True  # the documented route for 5-6 dims
     assert by["Optimal"]["applies"] is False
     assert by["Modular / HiTaS"]["applies"] is False
-    assert by["Hypercube / GHMITER"]["applies"] is True
+    if gh["available"]:
+        assert out["recommended"] == "Hypercube / GHMITER"
+    else:
+        assert out["recommended"] is None
+        assert "Hypercube" in out["recommended_note"]
 
 
 def test_method_advice_network_only_two_d_hierarchical():
@@ -66,18 +73,44 @@ def test_method_advice_every_method_has_pros_and_cons():
     out = server.method_advice(n_dimensions=2)
     assert len(out["methods"]) >= 5
     for m in out["methods"]:
-        assert set(m) >= {"method", "applies", "pros", "cons", "use"}
+        assert set(m) >= {"method", "applies", "available", "pros", "cons",
+                          "use"}
         assert m["pros"], f"{m['method']} has no pros"
         assert m["cons"], f"{m['method']} has no cons"
         assert m["use"], f"{m['method']} has no use"
 
 
-def test_method_advice_recommended_is_applicable():
+def test_method_advice_recommended_is_available_and_applicable():
+    # The recommendation must name a method that both fits the structure and
+    # is implemented by the engine; otherwise it is None with an explanation.
     for nd in (1, 2, 3, 4, 5, 6):
-        out = server.method_advice(n_dimensions=nd)
-        by = {m["method"]: m for m in out["methods"]}
-        assert by[out["recommended"]]["applies"] is True, (
-            f"n_dimensions={nd}: recommended {out['recommended']!r} is not applicable")
+        for freq in (False, True):
+            out = server.method_advice(n_dimensions=nd, frequency=freq)
+            rec = out["recommended"]
+            if rec is None:
+                assert out["recommended_note"]
+                continue
+            by = {m["method"]: m for m in out["methods"]}
+            assert by[rec]["applies"] is True, (
+                f"nd={nd} freq={freq}: {rec!r} is not applicable")
+            assert by[rec]["available"] is True, (
+                f"nd={nd} freq={freq}: {rec!r} is not available in this build")
+
+
+def test_method_advice_marks_engine_unavailable_methods():
+    out = server.method_advice(n_dimensions=2)
+    by = {m["method"]: m for m in out["methods"]}
+    # implemented by the engine on this build
+    assert by["Optimal"]["available"] is True
+    assert by["Modular / HiTaS"]["available"] is True
+    assert by["Controlled rounding"]["available"] is True
+    assert by["Global recoding"]["available"] is True
+    # not yet implemented: hypercube (flat port pending), network, CTA
+    assert by["Hypercube / GHMITER"]["available"] is False
+    assert by["Network"]["available"] is False
+    assert by["Controlled tabular adjustment (CTA)"]["available"] is False
+    assert out["available"] == [
+        "Global recoding", "Optimal", "Modular / HiTaS", "Controlled rounding"]
 
 
 def test_method_advice_rejects_bad_dimension_count():

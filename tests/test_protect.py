@@ -154,6 +154,7 @@ def _run_protect_subprocess(micro, tables, response, suppress, cwd=None, **kwarg
     code = (
         "import json\n"
         "from pytauargus.protect import protect\n"
+        "from pytauargus.engine import _status_symbol\n"
         f"res = protect(json.loads({json.dumps(micro)!r}), "
         f"json.loads({json.dumps(tables)!r}), response={response!r}, "
         f"safety_rules='P(25,1000)', suppress={suppress!r}, "
@@ -180,7 +181,9 @@ def _run_protect_subprocess(micro, tables, response, suppress, cwd=None, **kwarg
         "  'workdir': res.workdir,\n"
         "  'results': [\n"
         "     {'n': t.n_cells, 'status': t.status(), 'safe': t.safe(),\n"
-        "      'unsafe': t.unsafe(), 'cols': t.columns}\n"
+        "      'unsafe': t.unsafe(), 'cols': t.columns,\n"
+        "      'reason': t.reason(), 'statuses': t.statuses(),\n"
+        "      'sym_from_status': [_status_symbol(s) for s in (t.statuses() or [])]}\n"
         "     for t in res.tables],\n"
         "}\n"
         "print(json.dumps(out))\n"
@@ -232,6 +235,13 @@ def test_protect_full_run_subprocess(kwargs):
             assert sf == "x"
         else:
             assert isinstance(sf, (int, float))
+    # reason codes: the numeric statuses align 1:1 with the written rows, and
+    # mapped back to symbols they reproduce the file's status column
+    assert r["statuses"] is not None and len(r["statuses"]) == 9
+    assert all(isinstance(s, int) for s in r["statuses"])
+    assert r["sym_from_status"] == r["status"]
+    assert len(r["reason"]) == 9
+    assert all(isinstance(x, str) and x for x in r["reason"])
 
 
 def test_protect_relative_workdir_subprocess(tmp_path):

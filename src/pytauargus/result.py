@@ -28,7 +28,7 @@ The result exposes a piargus-style API:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Sequence, Union
+from typing import Dict, List, Optional, Sequence, Union
 
 from pytauargus.dataframe import make_frame
 
@@ -43,6 +43,72 @@ ST_EMPTY = "E"
 
 # Symbols whose value is withheld from publication.
 _WITHHOLD = (ST_UNSAFE, ST_SECONDARY)
+
+# Numeric cell-status codes. These mirror the native ``CS_*`` constants
+# (engine.native core ``defines.h``) and the Python ``CS_*`` in
+# ``pytauargus.engine``. For the primary-unsafe range 3-9 they name the
+# specific rule that flagged a cell, which the intermediate status symbol
+# (``U``) collapses into a single letter.
+STATUS_SAFE = 1
+STATUS_SAFE_MANUAL = 2
+STATUS_UNSAFE_RULE = 3
+STATUS_UNSAFE_PEEP = 4
+STATUS_UNSAFE_FREQ = 5
+STATUS_UNSAFE_ZERO = 6
+STATUS_UNSAFE_SINGLETON = 7
+STATUS_UNSAFE_SINGLETON_MANUAL = 8
+STATUS_UNSAFE_MANUAL = 9
+STATUS_PROTECT_MANUAL = 10
+STATUS_SECONDARY_UNSAFE = 11
+STATUS_SECONDARY_UNSAFE_MANUAL = 12
+STATUS_EMPTY_NONSTRUCT = 13
+STATUS_EMPTY = 14
+
+# Human-readable reason per numeric status. The 3-9 entries name the specific
+# rule that flagged an unsafe cell; the rest name the status category.
+_STATUS_REASON = {
+    STATUS_SAFE: "safe",
+    STATUS_SAFE_MANUAL: "safe (manual)",
+    STATUS_UNSAFE_RULE: "unsafe (safety rule)",
+    STATUS_UNSAFE_PEEP: "unsafe (peep hole)",
+    STATUS_UNSAFE_FREQ: "unsafe (frequency)",
+    STATUS_UNSAFE_ZERO: "unsafe (zero)",
+    STATUS_UNSAFE_SINGLETON: "unsafe (singleton)",
+    STATUS_UNSAFE_SINGLETON_MANUAL: "unsafe (singleton, manual)",
+    STATUS_UNSAFE_MANUAL: "unsafe (manual)",
+    STATUS_PROTECT_MANUAL: "manually protected",
+    STATUS_SECONDARY_UNSAFE: "secondary unsafe",
+    STATUS_SECONDARY_UNSAFE_MANUAL: "secondary unsafe (manual)",
+    STATUS_EMPTY_NONSTRUCT: "empty (non-structural)",
+    STATUS_EMPTY: "empty (structural)",
+}
+
+# Fallback reason from the status symbol, used when the numeric status was
+# not supplied at construction (a result parsed straight from a file).
+_SYMBOL_REASON = {
+    ST_SAFE: "safe",
+    ST_UNSAFE: "unsafe",
+    ST_PROTECTED: "manually protected",
+    ST_SECONDARY: "secondary unsafe",
+    ST_EMPTY: "empty",
+}
+
+
+def _check_statuses(statuses: Optional[Sequence[int]], n_rows: int
+                    ) -> Optional[List[int]]:
+    """Normalise an optional per-cell numeric-status list to ``List[int]``.
+
+    Returns ``None`` when no statuses were given; raises ``ValueError`` when
+    the supplied length does not match the number of rows.
+    """
+    if statuses is None:
+        return None
+    numeric = [int(s) for s in statuses]
+    if len(numeric) != n_rows:
+        raise ValueError(
+            f"statuses length ({len(numeric)}) does not match the number of "
+            f"table rows ({n_rows})")
+    return numeric
 
 
 def _validate_columns(exp_vars, response, is_freq=False):
@@ -129,20 +195,23 @@ class TableResult:
                  path: Union[str, Path],
                  exp_vars: Sequence[str],
                  response: str,
-                 is_freq: bool = False):
+                 is_freq: bool = False,
+                 statuses: Optional[Sequence[int]] = None):
         self._path = Path(path)
         self._exp = [str(v) for v in exp_vars]
         self._response = str(response)
         self._is_freq = is_freq
         self._rows = parse_simple_tab(self._path, self._exp,
                                       self._response, self._is_freq)
+        self._statuses = _check_statuses(statuses, len(self._rows))
 
     @classmethod
     def from_rows(cls,
                   rows: Sequence[dict],
                   exp_vars: Sequence[str],
                   response: str,
-                  is_freq: bool = False) -> "TableResult":
+                  is_freq: bool = False,
+                  statuses: Optional[Sequence[int]] = None) -> "TableResult":
         """Build a result from already-parsed row dicts (e.g. for tests)."""
         _validate_columns(exp_vars, response, is_freq)
         obj = cls.__new__(cls)
@@ -151,6 +220,7 @@ class TableResult:
         obj._response = str(response)
         obj._is_freq = is_freq
         obj._rows = [dict(r) for r in rows]
+        obj._statuses = _check_statuses(statuses, len(obj._rows))
         return obj
 
     # -- shape ---------------------------------------------------------------
@@ -190,6 +260,34 @@ class TableResult:
     def status(self) -> List[str]:
         """One status symbol per cell (``S``/``U``/``P``/``M``/``E``)."""
         return self._col("status")
+
+    def statuses(self) -> Optional[List[int]]:
+        """The numeric ``CS_*`` status per cell, if known (``None`` otherwise).
+
+        For primary-unsafe cells (symbol ``U``) this is the specific reason
+        code 3-9 (safety rule, peep, frequency, zero, singleton, manual); see
+        :meth:`reason` for the human-readable form.
+        """
+        return None if self._statuses is None else list(self._statuses)
+
+    def reason(self) -> List[str]:
+        """A short per-cell explanation of the status.
+
+        When the numeric status is known (a result built with ``statuses``,
+        e.g. from :func:`pytauargus.protect.protect`), primary-unsafe cells
+        (``U``) are given the specific reason that flagged them (``unsafe
+        (safety rule)``, ``unsafe (frequency)``, ``unsafe (singleton)``,
+        ...); all other cells are named by their status category. When only
+        the status symbol is available (a result parsed straight from a
+        ``.tab`` file), a coarser category reason is returned.
+        """
+        if self._statuses is not None:
+            out: List[str] = []
+            for i, s in enumerate(self._statuses):
+                out.append(_STATUS_REASON.get(s,
+                            _SYMBOL_REASON.get(self._rows[i]["status"], "unknown")))
+            return out
+        return [_SYMBOL_REASON.get(s, "unknown") for s in self._col("status")]
 
     def safe(self, unsafe_marker: object = "x") -> List[object]:
         """The published value per cell, unsafe/secondary cells masked.

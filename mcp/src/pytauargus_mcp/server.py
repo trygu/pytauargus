@@ -130,21 +130,104 @@ def run_arb(arb_path: str) -> Dict[str, Any]:
     return {"arb": str(p), "tables": tables}
 
 
+# Result diagnostic names reserved by the engine (see
+# ``pytauargus.result._validate_columns``); a source column must not use one.
+_TABLE_RESERVED = ("cost", "freq", "lower", "status", "upper")
+
+
+def _validate_table_spec(microdata, tables, response) -> List[List[str]]:
+    """Validate ``tables`` and ``response`` before any engine work.
+
+    Returns the per-table variable names (the canonical list-of-lists
+    shape). An MCP client gets a clear, self-correcting error naming the
+    offending variable and the available columns, instead of an obscure
+    failure deep in the native engine. Accepts the same shapes as
+    :func:`pytauargus.protect.protect`: a flat list of variable names
+    (one table) or a list of per-table lists (several tables).
+    """
+    from pytauargus.dataframe import to_microdata
+
+    if isinstance(microdata, str):
+        mp = Path(microdata)
+        if not mp.is_file():
+            raise FileNotFoundError(f"microdata file not found: {mp}")
+        if mp.suffix.lower() != ".parquet":
+            raise ValueError(
+                f"unsupported microdata format {mp.suffix!r} "
+                "(expected a .parquet path or a dict of column to list)")
+        columns = list(to_microdata(str(mp)))
+    else:
+        columns = list(to_microdata(microdata))
+
+    if not isinstance(tables, (list, tuple)):
+        raise TypeError(
+            "tables must be a list: a flat list of variable names for one "
+            'table (e.g. ["Region", "Size"]) or a list of per-table lists '
+            'for several tables (e.g. [["Region"], ["Size"]]); '
+            f"got {type(tables).__name__}")
+    if not tables:
+        raise ValueError(
+            "tables must name at least one explanatory variable "
+            "(a flat list of names, or a list of per-table lists)")
+    if all(isinstance(t, str) for t in tables):
+        specs = [list(tables)]
+    else:
+        specs = []
+        for t in tables:
+            if isinstance(t, str):
+                specs.append([t])
+            elif isinstance(t, (list, tuple)) and t and all(
+                    isinstance(v, str) for v in t):
+                specs.append(list(t))
+            else:
+                raise TypeError(
+                    "each table must be a non-empty list of variable "
+                    f"names; got {t!r}")
+    if any(not spec for spec in specs):
+        raise ValueError("every table must name at least one variable")
+
+    names = [v for spec in specs for v in spec]
+    bad = sorted({v for v in names if v not in columns})
+    if bad:
+        raise ValueError(
+            f"unknown table variable(s) {', '.join(repr(v) for v in bad)}; "
+            f"available columns: {', '.join(columns)}")
+    reserved = sorted({v for v in names if v in _TABLE_RESERVED})
+    if reserved:
+        raise ValueError(
+            f"table variable(s) {', '.join(reserved)} use a reserved "
+            "diagnostic name "
+            f"({', '.join(_TABLE_RESERVED)}); rename the source column")
+    if not isinstance(response, str) or response not in columns:
+        raise ValueError(
+            f"unknown response variable {response!r}; "
+            f"available columns: {', '.join(columns)}")
+    if response in _TABLE_RESERVED:
+        raise ValueError(
+            f"response {response!r} uses a reserved diagnostic name; "
+            "rename the source column")
+    if any(response in spec for spec in specs):
+        raise ValueError(
+            f"the response {response!r} cannot also be a table variable")
+    return specs
+
+
 def protect_tables(microdata: Union[str, Dict[str, List[Any]]],
                    tables: list, response: str,
                    safety_rules: str = "P(25,1)", suppress: str = "OPT(1)",
                    workdir: Optional[str] = None) -> Dict[str, Any]:
     """One-shot protection (wraps :func:`pytauargus.protect`).
 
-    Returns per-table cell counts, status counts, the unsafe (``U``)
-    and secondary (``M``) cells, and all produced file paths.
+    ``tables`` is a flat list of explanatory variable names (one table)
+    or a list of per-table lists (several tables); ``response`` is a
+    numeric column. Variable and response names are validated against
+    the microdata columns before the engine runs. Returns per-table cell
+    counts, status counts, the unsafe (``U``) and secondary (``M``)
+    cells, and all produced file paths.
     """
     from pytauargus.protect import protect
-    if isinstance(microdata, str):
-        mp = Path(microdata)
-        if not mp.is_file():
-            raise FileNotFoundError(f"microdata file not found: {mp}")
-    res = protect(microdata, tables, response,
+    specs = _validate_table_spec(microdata, tables, response)
+    res = protect(microdata, specs, response,
                   safety_rules=safety_rules, suppress=suppress,
                   workdir=workdir)
     out_tables: List[Dict[str, Any]] = []
@@ -201,15 +284,8 @@ def assess_table(microdata: Union[str, Dict[str, List[Any]]],
     from pytauargus.engine import run_batch
     from pytauargus.result import TableResult
 
-    if isinstance(microdata, str):
-        mp = Path(microdata)
-        if not mp.is_file():
-            raise FileNotFoundError(f"microdata file not found: {mp}")
+    tab_specs = _validate_table_spec(microdata, tables, response)
     micro = to_microdata(microdata)
-    if all(isinstance(t, str) for t in tables):
-        tab_specs = [list(tables)]
-    else:
-        tab_specs = [list(t) for t in tables]
     n = len(tab_specs)
 
     if workdir is None:
@@ -233,14 +309,15 @@ def assess_table(microdata: Union[str, Dict[str, List[Any]]],
         lines.append('<WRITETABLE> (%d,5,SO+,"%s")' % (i, out))
     Path(arb).write_text("\n".join(lines) + "\n")
 
-    run_batch(arb)
+    eng = run_batch(arb)
 
     files = {"asc": asc, "rda": rda, "arb": arb}
     out_tables: List[Dict[str, Any]] = []
     for i, out in enumerate(output_names):
         files[f"tab{i + 1}"] = out
         t = TableResult(path=out, exp_vars=tab_specs[i],
-                        response=response, is_freq=False)
+                        response=response, is_freq=False,
+                        statuses=eng.table_cell_statuses(i))
         rows = t.rows
         statuses = t.status()
         status_counts: Dict[str, int] = {}
@@ -255,6 +332,7 @@ def assess_table(microdata: Union[str, Dict[str, List[Any]]],
                     "value": row[response],
                     "freq": row["freq"],
                     "status": statuses[idx],
+                    "reason": t.reason()[idx],
                 })
         out_tables.append({
             "n_cells": t.n_cells,
@@ -385,6 +463,7 @@ def _rule_meaning(token: str) -> str:
 # :func:`method_advice`; the pros/cons/use are the fixed reference text.
 _METHODS = [
     {"method": "Global recoding",
+     "available": True,
      "pros": ["Reduces sensitivity by design before any suppression",
               "Can cut the number of cells that must be suppressed"],
      "cons": ["Loses classification detail",
@@ -392,6 +471,7 @@ _METHODS = [
      "use": "A first move when the table is more detailed than the release "
             "needs."},
     {"method": "Optimal",
+     "available": True,
      "pros": ["Globally optimal: affects the fewest cells and least "
               "information",
               "Models the whole table at once"],
@@ -399,24 +479,28 @@ _METHODS = [
               "Limited to about four dimensions"],
      "use": "The default for most microdata tables of up to four dimensions."},
     {"method": "Modular / HiTaS",
+     "available": True,
      "pros": ["Fast: processes a hierarchy level by level",
               "Handles hierarchies top-down"],
      "cons": ["A sub-table optimum is not the global optimum",
               "A full-table audit can still find narrow intervals"],
      "use": "A faster alternative for hierarchical tables."},
     {"method": "Hypercube / GHMITER",
+     "available": False,
      "pros": ["The documented route for 5- and 6-dimensional tables",
               "Supports linked table sets"],
      "cons": ["Heuristic; can over-suppress",
               "Ignores the user's cost variable"],
      "use": "Required when a table has five or six dimensions."},
     {"method": "Network",
+     "available": False,
      "pros": ["Fast network-flow heuristic",
               "No commercial solver needed"],
      "cons": ["Two dimensions only, with one hierarchy in the first variable",
               "Gives a feasible, not necessarily optimal, pattern"],
      "use": "A fast option for a two-way table with a single hierarchy."},
     {"method": "Controlled tabular adjustment (CTA)",
+     "available": False,
      "pros": ["Adjusts values instead of suppressing, so more cells are "
               "published",
               "Preserves additive relations"],
@@ -424,6 +508,7 @@ _METHODS = [
               "Protection means moving a value, not a suppression interval"],
      "use": "When you prefer complete, adjusted tables to suppressed ones."},
     {"method": "Controlled rounding",
+     "available": True,
      "pros": ["Particularly suited to frequency (count) tables",
               "Keeps totals and subtotals adding up"],
      "cons": ["Values become multiples of a base",
@@ -442,12 +527,25 @@ def _method_applies(name: str, n_dimensions: int, hierarchical: bool) -> bool:
     return True
 
 
-def _recommend(n_dimensions: int, frequency: bool) -> str:
+def _available(name: str) -> bool:
+    return next(m for m in _METHODS if m["method"] == name)["available"]
+
+
+def _recommend(n_dimensions: int, frequency: bool) -> Optional[str]:
+    """The preferred method for the structure, if this build implements it.
+
+    Returns ``None`` when the preferred method is not available, so the
+    advice never points at a method the engine cannot run.
+    """
     if n_dimensions >= 5:
-        return "Hypercube / GHMITER"
-    if frequency:
-        return "Controlled rounding"
-    return "Optimal"
+        preferred = "Hypercube / GHMITER"
+    elif frequency:
+        preferred = "Controlled rounding"
+    else:
+        preferred = "Optimal"
+    if _available(preferred) and _method_applies(preferred, n_dimensions, False):
+        return preferred
+    return None
 
 
 def method_advice(n_dimensions: int,
@@ -458,8 +556,11 @@ def method_advice(n_dimensions: int,
     ``n_dimensions`` is the number of explanatory (dimension) variables in
     the table, 1 to 6. ``hierarchical`` marks a table with a hierarchy
     dimension. ``frequency`` marks a count table (the response is a
-    frequency). Returns each method with ``applies``/``pros``/``cons``/
-    ``use`` and the ``recommended`` method for this structure.
+    frequency). Returns each method with ``applies`` (fits the structure),
+    ``available`` (implemented by this build), ``pros``/``cons``/``use``; the
+    list of ``available`` method names; and the ``recommended`` method for
+    this structure (``None`` with a ``recommended_note`` when no available
+    method fits).
     """
     if isinstance(n_dimensions, bool) or not isinstance(n_dimensions, int):
         raise TypeError("n_dimensions must be an int")
@@ -468,15 +569,28 @@ def method_advice(n_dimensions: int,
     methods = [{
         "method": m["method"],
         "applies": _method_applies(m["method"], n_dimensions, hierarchical),
+        "available": m["available"],
         "pros": list(m["pros"]),
         "cons": list(m["cons"]),
         "use": m["use"],
     } for m in _METHODS]
+    recommended = _recommend(n_dimensions, frequency)
+    if recommended is None:
+        note = ("No protection method is available for this table in this "
+                "build."
+                if n_dimensions < 5 else
+                "No protection method is available for this table in this "
+                "build: five- and six-dimensional tables need Hypercube / "
+                "GHMITER, which is not yet implemented.")
+    else:
+        note = ""
     return {
         "n_dimensions": n_dimensions,
         "hierarchical": hierarchical,
         "frequency": frequency,
-        "recommended": _recommend(n_dimensions, frequency),
+        "recommended": recommended,
+        "recommended_note": note,
+        "available": [m["method"] for m in _METHODS if m["available"]],
         "methods": methods,
     }
 
@@ -501,9 +615,11 @@ Workflow (consult the statistician as you go):
      frequency, zero cells, or a respondent request;
    - which policy: use the standard policy unless the statistician names one.
 3. tauargus_method_advice with the table's structure to see which protection
-   methods apply, their pros and cons, and the recommendation. Read
-   tauargus://doc/protection-methods for the full discussion. Explain the
-   trade-off in plain words and confirm the choice.
+   methods apply, which are available in this build, their pros and cons, and
+   the recommendation. Read tauargus://doc/protection-methods for the full
+   discussion. If the recommended route is not available in this build, say
+   so in plain words and offer what is available; never promise a method the
+   engine cannot run. Explain the trade-off and confirm the choice.
 4. tauargus_assess (the same table and safety rules, but no suppression) to
    see exactly which cells the rules flag and with what values and
    contributor counts. Use the plain rule meanings in the result to explain
@@ -590,6 +706,16 @@ margins move.
 Merge row, column or hierarchy categories before suppressing. Reduces
 sensitivity by design and can cut the number of suppressions, at the cost of
 classification detail. Not available for ready-made (pre-tabulated) tables.
+
+## Availability in this build
+
+Not every method above is implemented by the current engine. Available now:
+**Optimal**, **Modular / HiTaS**, **Controlled rounding** and **Global
+recoding**. **Hypercube / GHMITER**, **Network** and **CTA** are documented in
+the manual but not yet implemented in this build; `tauargus_method_advice`
+marks them ``available: false`` and never recommends them. The "Choosing"
+list below is the manual's guidance, not a statement of what this build can
+run.
 
 ## Choosing
 
@@ -689,8 +815,11 @@ def tauargus_protect(microdata: Union[str, Dict[str, List[Any]]],
     ``microdata`` is a ``.parquet`` path or a dict of column to value
     lists. ``tables`` is a flat list of explanatory variables (one
     table) or a list of per-table lists. ``response`` names the numeric
-    response column. Returns per-table cell counts, status counts, the
-    unsafe and secondary cells, and all produced file paths.
+    response column. The variable and response names are validated
+    against the microdata columns before the engine runs, with the
+    available columns named in the error. Returns per-table cell
+    counts, status counts, the unsafe and secondary cells, and all
+    produced file paths.
     """
     return protect_tables(microdata, tables, response,
                           safety_rules=safety_rules, suppress=suppress,
@@ -704,11 +833,14 @@ def tauargus_assess(microdata: Union[str, Dict[str, List[Any]]],
                     workdir: Optional[str] = None) -> Dict[str, Any]:
     """Run the safety rules without suppressing: what is sensitive, and why.
 
-    Same inputs as tauargus_protect except the suppression spec. Returns,
-    per table, the cells the rules flag (``U`` sensitive, ``E`` empty) with
-    their value and contributor count, the applied rules explained in plain
-    words, and the status legend. Nothing is withheld, so the statistician
-    sees exactly what a protection would act on before it happens.
+    Same inputs as tauargus_protect except the suppression spec; the
+    variable and response names are validated the same way. Returns,
+    per table, the cells the rules flag (``U`` sensitive, ``E`` empty)
+    with their value, contributor count and the plain-language reason
+    each is sensitive (safety rule, frequency, singleton, zero,
+    manual, ...), the applied rules explained in plain words, and the
+    status legend. Nothing is withheld, so the statistician sees
+    exactly what a protection would act on before it happens.
     """
     return assess_table(microdata, tables, response,
                         safety_rules=safety_rules, workdir=workdir)
@@ -736,9 +868,11 @@ def tauargus_method_advice(n_dimensions: int,
     ``n_dimensions`` is the number of dimension variables in the table
     (1 to 6). ``hierarchical`` is true when a dimension is a hierarchy.
     ``frequency`` is true when the response is a count. Returns each method
-    with ``applies``/``pros``/``cons``/``use`` and the ``recommended``
-    method for this structure. Read ``tauargus://doc/protection-methods``
-    for the full discussion.
+    with ``applies`` (fits the structure), ``available`` (implemented by this
+    build), ``pros``/``cons``/``use``, and the ``recommended`` method for
+    this structure (``None`` with a ``recommended_note`` when no available
+    method fits). Read ``tauargus://doc/protection-methods`` for the full
+    discussion.
     """
     return method_advice(n_dimensions, hierarchical, frequency)
 
