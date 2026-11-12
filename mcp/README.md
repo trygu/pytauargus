@@ -45,12 +45,14 @@ Nine tools cover the workflow.
   run plus an overall one. Call it at the end of the work; pass
   `path` to also save the report to a file.
   The default report is an **internal working document**: it carries
-  the values of the suppressed cells and is for the statistician, who
-  holds access to the microdata. It must not be distributed; the
+  the values of the suppressed cells, is for the statistician (who
+  holds access to the microdata) and is the process record the office
+  keeps of the protection. It must not be distributed; the
   publication artifact is the table file, in which the suppressed
   cells are blank. With `public=true` the tool renders the
-  **distribution copy**, in which every suppressed value is redacted
-  and only what the published table already reveals remains: the cell
+  **distribution copy**, for sharing the protection process with a
+  reviewer or data recipient: every suppressed value is redacted and
+  only what the published table already reveals remains: the cell
   identities, the method, the cell counts, the audit intervals (which
   are derivable from the published cells alone) and the verdict.
 - **`tauargus_method_advice`** recommends a protection method for the
