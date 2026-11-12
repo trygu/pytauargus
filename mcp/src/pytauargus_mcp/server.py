@@ -487,10 +487,12 @@ _METHODS = [
      "use": "A faster alternative for hierarchical tables."},
     {"method": "Hypercube / GHMITER",
      "available": True,
-     "pros": ["The documented route for 5- and 6-dimensional tables",
-              "Supports linked table sets"],
+     "pros": ["Supports flat tables with five or six dimensions",
+              "Runs without an optimisation solver"],
      "cons": ["Heuristic; can over-suppress",
               "Ignores the user's cost variable",
+              "Only addresses exact reconstruction; requested quantitative "
+              "protection intervals require a separate audit",
               "This build covers flat tables only: hierarchical, linked and "
               "weighted tables are not yet supported"],
      "use": "Required when a flat table has five or six dimensions."},
@@ -524,7 +526,9 @@ def _method_applies(name: str, n_dimensions: int, hierarchical: bool) -> bool:
         return n_dimensions <= 4
     if name == "Network":
         return n_dimensions == 2 and hierarchical
-    # Global recoding, Hypercube, CTA and Controlled rounding are always
+    if name == "Hypercube / GHMITER":
+        return not hierarchical
+    # Global recoding, CTA and Controlled rounding are always
     # available as a method choice for the documented structures.
     return True
 
@@ -533,7 +537,7 @@ def _available(name: str) -> bool:
     return next(m for m in _METHODS if m["method"] == name)["available"]
 
 
-def _recommend(n_dimensions: int, frequency: bool) -> Optional[str]:
+def _recommend(n_dimensions: int, frequency: bool, hierarchical: bool) -> Optional[str]:
     """The preferred method for the structure, if this build implements it.
 
     Returns ``None`` when the preferred method is not available, so the
@@ -545,7 +549,7 @@ def _recommend(n_dimensions: int, frequency: bool) -> Optional[str]:
         preferred = "Controlled rounding"
     else:
         preferred = "Optimal"
-    if _available(preferred) and _method_applies(preferred, n_dimensions, False):
+    if _available(preferred) and _method_applies(preferred, n_dimensions, hierarchical):
         return preferred
     return None
 
@@ -576,9 +580,10 @@ def method_advice(n_dimensions: int,
         "cons": list(m["cons"]),
         "use": m["use"],
     } for m in _METHODS]
-    recommended = _recommend(n_dimensions, frequency)
-    note = ("No protection method is available for this table in this "
-            "build."
+    recommended = _recommend(n_dimensions, frequency, hierarchical)
+    note = ("This build has no recommended suppression method for this "
+            "structure. GH requires a flat table; OPT/MOD support at most "
+            "four dimensions."
             if recommended is None else "")
     return {
         "n_dimensions": n_dimensions,
@@ -673,9 +678,11 @@ narrow.
 
 ### Hypercube / GHMITER
 Suppresses the corners of a hypercube around each primary to block exact
-reconstruction. The documented route for 5- and 6-dimensional tables and for
-linked sets. Heuristic: it can over-suppress and ignores the user's cost
-variable.
+reconstruction. Supports flat tables with up to six dimensions in this
+build. Hierarchical, linked and weighted tables are
+unsupported. Heuristic: it can over-suppress and ignores the user's cost
+variable. Quantitative protection intervals are not enforced; audit the
+result against the requested protection levels before publication.
 
 ### Network
 A shortest-path / network-flow heuristic for a two-way table with one

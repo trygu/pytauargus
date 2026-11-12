@@ -1564,8 +1564,10 @@ class Engine:
         Write the steering and cells files, run the ghm library in process,
         and read the secondaries back. There is no solver in this path, so a
         failure is an engine failure (BatchError, exit 3), never a solver
-        failure (ADR 0002). Only the flat, non-weighted table shape is
-        ported (4.1 section 2.8.1, validated against the gfortran oracle).
+        failure (ADR 0002). Only the exact-reconstruction criterion for flat,
+        non-weighted tables is ported (4.1 section 2.8.1, selected cases
+        compared with the gfortran oracle). Quantitative protection intervals
+        are not enforced; audit them separately.
         A table with a hierarchical dimension is rejected up front (see
         ``_gh_require_flat``); linked and weighted tables are not yet
         supported.
@@ -1573,7 +1575,15 @@ class Engine:
         import os
         import tempfile
 
-        is_singleton = bool(cmd.gh_singleton)
+        # Modified 2026-11-12: the core's IsSingleton flag selects a special
+        # pass which drops other primaries; it is not ApplySingleton.
+        if cmd.gh_singleton:
+            raise BatchError("GH singleton protection is not implemented.")
+        if cmd.gh_apriory_pct != 0:
+            raise BatchError("GH apriori percentage is not implemented; use 0.")
+        if cmd.gh_size != 0:
+            raise BatchError("GH model size is not implemented; use 0.")
+        is_singleton = False
         with tempfile.TemporaryDirectory() as tmp:
             stuer = os.path.join(tmp, "gh_stuer.txt")
             eingabe = os.path.join(tmp, "gh_eingabe.txt")

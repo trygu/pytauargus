@@ -64,6 +64,17 @@ def test_method_advice_network_only_two_d_hierarchical():
     assert {m["method"]: m["applies"] for m in three_d["methods"]}["Network"] is False
 
 
+@pytest.mark.parametrize("n_dimensions", (2, 5, 6))
+def test_method_advice_never_offers_gh_for_hierarchies(n_dimensions):
+    out = server.method_advice(n_dimensions=n_dimensions, hierarchical=True)
+    gh = next(m for m in out["methods"] if m["method"] == "Hypercube / GHMITER")
+    assert gh["applies"] is False
+    assert out["recommended"] != "Hypercube / GHMITER"
+    if n_dimensions >= 5:
+        assert out["recommended"] is None
+        assert out["recommended_note"]
+
+
 def test_method_advice_frequency_recommends_rounding():
     out = server.method_advice(n_dimensions=2, frequency=True)
     assert out["recommended"] == "Controlled rounding"

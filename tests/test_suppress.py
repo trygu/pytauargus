@@ -140,6 +140,44 @@ class TestRNDSuppress:
 
 
 class TestGHSuppress:
+    @pytest.mark.parametrize("options, message", [
+        ({"gh_singleton": True}, "singleton"),
+        ({"gh_apriory_pct": 10}, "apriori"),
+        ({"gh_size": 100}, "model size"),
+    ])
+    def test_gh_rejects_unsupported_options_before_mutating(self, options, message):
+        eng = run_batch(DATA / "TestGhFlat.arb")
+        before = _statuses(eng._tau, 0)
+        with pytest.raises(BatchError, match=message):
+            eng.suppress(Suppress(kind="GH", tab_no=1, **options))
+        assert _statuses(eng._tau, 0) == before
+
+    def test_gh_sparse_table_uses_nonzero_secondaries(self, tmp_path):
+        from pytauargus import protect
+
+        data = {"Row": [], "Col": [], "Value": []}
+        for i, row in enumerate(((5, 4, 4), (0, 6, 6), (4, 6, 6))):
+            for j, value in enumerate(row):
+                if value == 0:
+                    continue
+                parts = (5,) if (i, j) == (0, 0) else (value / 2, value / 2)
+                for part in parts:
+                    data["Row"].append(chr(65 + i))
+                    data["Col"].append(chr(88 + j))
+                    data["Value"].append(part)
+        result = protect(data, ["Row", "Col"], response="Value",
+                         safety_rules="NK(1,75)", suppress="GH(1)",
+                         workdir=tmp_path)
+        assert count_secondary(result.engine._tau, 0) == 3
+        tau = result.engine._tau
+        statuses = _statuses(tau, 0)
+        for index, status in enumerate(statuses):
+            if status in (CS_SECONDARY_UNSAFE, CS_SECONDARY_UNSAFE_MANUAL):
+                assert tau.get_table_cell_value(0, index)[1] != 0
+        primaries = [cell for cell in result.engine.audit(0) if cell["status"] == "u"]
+        assert primaries
+        assert all(cell["min"] < cell["value"] < cell["max"] for cell in primaries)
+
     def test_gh_marks_secondary_cells(self):
         """GH covers each primary-unsafe cell with a hypercube and marks the
         remaining corners as secondary on a flat table."""
