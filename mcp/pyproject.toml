@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pytauargus-mcp"
-version = "0.1.0"
+version = "0.8.0"
 description = "Model Context Protocol server for Tau-Argus: the agent front-end over the pytauargus engine"
 requires-python = ">=3.11"
 readme = "README.md"
@@ -17,7 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 dependencies = [
-    "pytauargus==0.7.0",
+    "pytauargus==0.8.0",
     "mcp<2",
 ]
 
