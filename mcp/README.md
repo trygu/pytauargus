@@ -11,6 +11,11 @@ backgrounded by the client. It is a thin wrapper over the `pytauargus`
 Python API; it re-implements no engine behaviour. Installing it also
 gives you the `pytauargus` package and the `tauargus` CLI.
 
+The server runs locally on stdio: the microdata, the protection run
+and the results stay on the machine that hosts it, and the server makes
+no network calls. You can run it air-gapped, for example in a datacenter
+with an MCP client backed by a local LLM.
+
 ## What it does
 
 Eight tools cover the workflow.
