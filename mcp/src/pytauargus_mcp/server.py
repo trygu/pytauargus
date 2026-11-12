@@ -756,9 +756,11 @@ def tauargus_assess(microdata: Union[str, Dict[str, List[Any]]],
 
     Same inputs as tauargus_protect except the suppression spec. Returns,
     per table, the cells the rules flag (``U`` sensitive, ``E`` empty) with
-    their value and contributor count, the applied rules explained in plain
-    words, and the status legend. Nothing is withheld, so the statistician
-    sees exactly what a protection would act on before it happens.
+    their value, contributor count and the plain-language reason each is
+    sensitive (safety rule, frequency, singleton, zero, manual, ...), the
+    applied rules explained in plain words, and the status legend. Nothing is
+    withheld, so the statistician sees exactly what a protection would act on
+    before it happens.
     """
     return assess_table(microdata, tables, response,
                         safety_rules=safety_rules, workdir=workdir)
