@@ -1,0 +1,10 @@
+pytauargus-tui
+
+Copyright 2026 Trygve Tatsuya Falch (original contributions).
+Distributed under EUPL-1.2; see LICENCE.
+
+Source: https://github.com/trygu/pytauargus/tree/master/tui
+Released source revisions are recorded as product_commit in the matching
+release-manifest.json at https://github.com/trygu/pytauargus/releases.
+The separately installed pytauargus dependency includes EUPL native components
+and separately licensed third-party libraries; consult its installed notices.

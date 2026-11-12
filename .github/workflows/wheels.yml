@@ -1328,7 +1328,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import hashlib, json, os, pathlib, re, sys
+          import hashlib, json, os, pathlib, re, sys, zipfile
           dist = pathlib.Path("dist")
           manifests = sorted(dist.glob("**/manifest-*.json"))
           if not manifests:
@@ -1369,6 +1369,21 @@ jobs:
                   if actual != f["sha256"]:
                       sys.exit(f"sha256 mismatch for {p}: "
                                f"{actual} != {f['sha256']}")
+                  # Licence texts must survive wheel repair and publication.
+                  with zipfile.ZipFile(p) as wheel:
+                      legal = {pathlib.PurePosixPath(n).name
+                               for n in wheel.namelist() if ".dist-info/" in n}
+                  required_legal = {"LICENCE", "NOTICE.txt"}
+                  if e["product"] == "pytauargus":
+                      required_legal |= {
+                          "SOURCE.txt", "THIRD_PARTY_NOTICES.txt", "EUPL-1.1.txt",
+                          "INSEE-MIT.txt", "HiGHS-MIT.txt",
+                          "pybind11-BSD-3-Clause.txt", "HiGHS-pdqsort-Zlib.txt",
+                          "HiGHS-zstr-MIT.txt", "HiGHS-THIRD_PARTY_NOTICES.txt",
+                      }
+                  missing_legal = required_legal - legal
+                  if missing_legal:
+                      sys.exit(f"missing licence files in {p}: {sorted(missing_legal)}")
           # Required platform coverage: every supported CPython on every
           # target platform (the tag run always builds the full matrix).
           def cptag(name):

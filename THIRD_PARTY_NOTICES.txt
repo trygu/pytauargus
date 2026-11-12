@@ -1,0 +1,55 @@
+Third-party components in pytauargus
+====================================
+The project is distributed under EUPL-1.2. Components below retain their
+original notices and permissions; this is not an MIT-only or Apache-only
+redistribution. Full source locations are in SOURCE.txt.
+
+Tau-Argus core, HiTaS and rounder
+  Copyright 2014 Statistics Netherlands.
+  Original EUPL 1.1 notices retained; distributed under EUPL 1.2 using Article 5.
+  See LICENCE and LICENSES/EUPL-1.1.txt.
+
+CSP
+  Copyright M.D. Montes de Oca and J.J. Salazar.
+  Upstream README grants EUPL 1.1; this distribution uses Article 5 for 1.2.
+  The historical field-of-use header ambiguity is disclosed in NOTICE.txt.
+
+CRP
+  Copyright J.J. Salazar (jjsalaza@ull.es).
+  Original EUPL 1.1 grant; distributed under EUPL 1.2 using Article 5.
+
+GHMITER / hypercube
+  Copyright IT Nordrhein Westfalen. Original program by Giessing/Repsilber.
+  C port of the EUPL 1.1 Fortran program; distributed under EUPL 1.2 using Article 5.
+
+rtauargus Python adaptations
+  Copyright 2021 Institut National de la Statistique et des Etudes Economiques.
+  Original MIT permission: LICENSES/INSEE-MIT.txt.
+
+HiGHS (release version is recorded in release-manifest.json)
+  Copyright (c) 2026 HiGHS. MIT: LICENSES/HiGHS-MIT.txt.
+  The separately licensed bundled code is described in
+  LICENSES/HiGHS-THIRD_PARTY_NOTICES.txt, including:
+  - pdqsort: Copyright (c) 2021 Orson Peters; Zlib licence.
+    LICENSES/HiGHS-pdqsort-Zlib.txt.
+  - zstr: Copyright (c) 2015 Matei David, Ontario Institute for Cancer Research;
+    MIT. LICENSES/HiGHS-zstr-MIT.txt.
+  The release build leaves HiGHS HIPO disabled (its default); the upstream
+  notice explains the optional AMD, METIS and RCM components. Enabling HIPO
+  requires preserving those components' additional notices and licences.
+
+pybind11 (compiled header implementation in the extension)
+  Copyright (c) 2016 Wenzel Jakob. BSD-3-Clause.
+  LICENSES/pybind11-BSD-3-Clause.txt.
+
+Platform runtime libraries
+  Linux builds statically link GNU C++/GCC runtime code. Their runtime-library
+  exception permits eligible compiled combinations without imposing GPL on the
+  independent application. Runtime origin and applicable exception remain
+  relevant to redistribution: https://gcc.gnu.org/onlinedocs/libstdc++/manual/license.html
+  Windows wheels may bundle the Microsoft Visual C++ runtime (msvcp140.dll).
+  That runtime retains Microsoft's redistribution terms; it is not relicensed
+  by this project's EUPL declaration.
+
+PiArgus is acknowledged in README.md as inspiration for the DataFrame workflow
+and result API. The acknowledgement is not a claim to relicense PiArgus code.
