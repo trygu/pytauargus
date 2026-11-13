@@ -21,6 +21,15 @@ from pytauargus.arb import (
     suppr_writetable,
 )
 
+# The installed-distribution suite runs a curated copy of this file against
+# release-tests/conftest.py, which by design has no engine-repo data. There
+# DATA is None and the end-to-end recode run is skipped; the line-rendering
+# tests (no data needed) still run.
+try:
+    from conftest import DATA
+except ImportError:
+    DATA = None
+
 
 def read_lines(path):
     with open(path, encoding="utf-8") as fh:
@@ -351,6 +360,8 @@ def test_micro_arb_recode_spec_rejected(tmp_path, monkeypatch, recodes):
         _rec(tmp_path, monkeypatch, recodes=recodes)
 
 
+@pytest.mark.skipif(DATA is None,
+                    reason="engine-repo data not available in this suite")
 def test_recode_batch_runs_and_merges_codes(tmp_path):
     # End to end: a batch micro_arb wrote with a <RECODE> line runs and
     # merges the codes exactly as the .grc mapping says (Year 84-88: 85
@@ -360,7 +371,6 @@ def test_recode_batch_runs_and_merges_codes(tmp_path):
     # <TREERECODE>) are exercised end to end by the legacy GUI-generated
     # TestRecode.arb, which the conftest engine fixture runs on every
     # module that uses it.
-    from conftest import DATA
     from pytauargus.engine import run_batch
 
     grc = tmp_path / "year.grc"
