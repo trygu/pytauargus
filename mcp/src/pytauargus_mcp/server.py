@@ -664,7 +664,7 @@ def assess_table(microdata: Union[str, Dict[str, List[Any]]],
     _log("assess",
          microdata=microdata if isinstance(microdata, str)
          else f"<in-memory dict, {len(microdata)} columns>",
-         tables=tab_specs, response=response, rules=out["rules"])
+         tables=out["tables"], response=response, rules=out["rules"])
     return out
 
 

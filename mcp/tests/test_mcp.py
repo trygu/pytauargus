@@ -656,6 +656,26 @@ def test_report_writes_up_the_session(tmp_path):
     assert out["verdict"] == expected
 
 
+def test_report_writes_up_assess_session():
+    # a session that assesses must not crash the report: assess used to
+    # log the table spec (a list of variable names) where the renderer
+    # expects the result (a dict with n_cells and sensitive_cells), so
+    # any session with an assess call died in tauargus_report
+    server._session.clear()
+    assess = server.tauargus_assess(MICRO, ["Region", "Size"], "Var2")
+    out = server.tauargus_report()
+    md = out["markdown"]
+    assert "## Assessment (safety rules, nothing withheld)" in md
+    # every MICRO cell is a single record, so P(25,1) flags them all
+    flagged = [c for t in assess["tables"]
+               for c in t["sensitive_cells"] if c["status"] == "U"]
+    assert flagged
+    for c in flagged:
+        assert f"cell {c['cell']}" in md
+        assert f"value {server._num(c['value'])}" in md
+    assert "p% dominance rule" in md
+
+
 def test_report_notes_runs_without_audit(tmp_path):
     server._session.clear()
     files = _files(tmp_path)
