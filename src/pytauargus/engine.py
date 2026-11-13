@@ -1427,10 +1427,17 @@ class Engine:
             # PrepareHITAS writes the parameter + file-list for the solver.
             if not self._tau.prepare_hitas(tab, param_file, files_file, tmp):
                 raise BatchError("PrepareHITAS failed")
+            # The solver writes its scratch files (CSPlogfile.txt,
+            # cspSCIP.*, HiTaS.log, ...) into the out dir. Pass this
+            # call's temp dir so nothing lands in the user's working
+            # directory (legacy tau-ARGUS passed the OS temp dir). The
+            # C layer concatenates dir and name, so the trailing
+            # separator is required.
             ok = self._hitas.a_hitas(
                 pars_file=param_file,
                 files_file=files_file,
                 max_time=cmd.mod_max_time,
+                tau_out_dir=tmp + os.sep,
                 single_with_single=cmd.mod_singleton,
                 single_with_more=cmd.mod_singleton_multi,
                 do_count_bounds=cmd.mod_min_freq,
@@ -1452,8 +1459,14 @@ class Engine:
             lo, hi = self._table_cell_bounds(tab)
             if not self._tau.write_jj_format(tab, jj_in, lo, hi, False, False, False):
                 raise BatchError("WriteJJFormat failed for OPT")
+            # The solver writes its scratch files (CSPlogfile.txt,
+            # cspSCIP.*, FullJJ.log, ...) into the out dir. Pass this
+            # call's temp dir so nothing lands in the user's working
+            # directory. The C layer concatenates dir and name, so the
+            # trailing separator is required.
             res = self._hitas.full_jj(
-                in_file_jj=jj_in, out_file=jj_out, max_time=cmd.opt_max_time
+                in_file_jj=jj_in, out_file=jj_out, max_time=cmd.opt_max_time,
+                out_dir=tmp + os.sep
             )
             if res > 1:
                 raise SolverError(
