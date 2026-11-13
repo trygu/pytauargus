@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pytauargus-mcp"
-version = "0.8.2"
+version = "0.8.3"
 description = "Model Context Protocol server for Tau-Argus: the agent front-end over the pytauargus engine"
 requires-python = ">=3.11"
 readme = "README.md"
@@ -20,7 +20,7 @@ dependencies = [
     # The parquet extra: the server reads .parquet microdata directly
     # (README promise), so pyarrow must come with the install rather
     # than as a client-side --with.
-    "pytauargus[parquet]==0.8.2",
+    "pytauargus[parquet]==0.8.3",
     "mcp<2",
 ]
 
