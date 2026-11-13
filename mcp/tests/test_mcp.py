@@ -185,6 +185,144 @@ def test_build_arb_relative_output_default_arb(tmp_path, monkeypatch):
     assert [t["path"] for t in targets] == [str(tmp_path / "out.tab")]
 
 
+def test_build_arb_multi_table(tmp_path):
+    # issue #57 part 1: a list of per-table variable lists builds a
+    # multi-table batch (micro_arb accepts this; the tool passed a flat
+    # list only)
+    out = server.tauargus_build_arb(
+        asc_filename=str(DATA / "tau_testW.asc"),
+        rda_filename=str(DATA / "tau_testW.rda"),
+        explanatory_vars=[["Size"], ["Size", "Region"]],
+        response_var="Var2",
+        safety_rules="P(25,1)",
+        suppress="OPT(1)",
+        output_names=[str(tmp_path / "t1.tab"), str(tmp_path / "t2.tab")],
+        output_type="5",
+    )
+    arb = Path(out["arb"])
+    assert arb.exists()
+    text = arb.read_text(encoding="utf-8")
+    assert text.count("<SPECIFYTABLE>") == 2
+    assert text.count("<SAFETYRULE>") == 2
+    assert '<WRITETABLE> (1,' in text
+    assert '<WRITETABLE> (2,' in text
+    assert out["output_names"] == [str(tmp_path / "t1.tab"),
+                                   str(tmp_path / "t2.tab")]
+
+
+def test_build_arb_multi_table_per_table_args(tmp_path):
+    # per-table response var and safety rule pass through to micro_arb
+    # (R recycling: a length-1 value covers all tables, a per-table
+    # vector must have one entry per table)
+    out = server.tauargus_build_arb(
+        asc_filename=str(DATA / "tau_testW.asc"),
+        rda_filename=str(DATA / "tau_testW.rda"),
+        explanatory_vars=[["Size"], ["Size", "Region"]],
+        response_var=["Var2", "Var3"],
+        safety_rules=["P(25,1)", "P(50,1)"],
+        suppress=["OPT(1)", "OPT(1)"],
+        output_names=[str(tmp_path / "t1.tab"), str(tmp_path / "t2.tab")],
+    )
+    text = Path(out["arb"]).read_text(encoding="utf-8")
+    assert '"Size"|"Var2"|' in text
+    assert '"Size""Region"|"Var3"|' in text
+    assert "<SAFETYRULE> P(25,1)" in text
+    assert "<SAFETYRULE> P(50,1)" in text
+
+
+def test_build_arb_schema_exposes_multi_table():
+    # the runtime passes nested lists through regardless of the
+    # annotation, so pin the client-facing JSON schema: each
+    # explanatory_vars entry may be a variable name (one flat table)
+    # or a list of variable names (one table per entry)
+    tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
+    schema = tools["tauargus_build_arb"].inputSchema
+    items = schema["properties"]["explanatory_vars"]["items"]
+    item_types = {x.get("type") for x in items.get("anyOf", [])}
+    assert item_types == {"string", "array"}
+
+
+# ===========================================================================
+# tauargus_to_asc_rda (issue #56: bootstrap the batch flow from
+# parquet/dict, with up-front column type validation)
+# ===========================================================================
+
+def test_to_asc_rda_from_parquet(tmp_path):
+    src = DATA / "examples" / "parquet" / "micro.parquet"
+    p = tmp_path / "micro.parquet"
+    p.write_bytes(src.read_bytes())
+    out = server.tauargus_to_asc_rda(str(p), response_var="Value")
+    asc, rda = Path(out["asc"]), Path(out["rda"])
+    # default: the pair is written next to the input
+    assert asc == p.with_suffix(".asc") and asc.exists()
+    assert rda == p.with_suffix(".rda") and rda.exists()
+    types = {v["name"]: v["type"] for v in out["variables"]}
+    assert types == {"Sector": "RECODEABLE", "Geo": "RECODEABLE",
+                     "Value": "NUMERIC"}
+
+
+def test_to_asc_rda_from_dict(tmp_path):
+    out = server.tauargus_to_asc_rda(
+        MICRO,
+        response_var="Var2",
+        explanatory_vars=["Region", "Size"],
+        asc_filename=str(tmp_path / "m.asc"),
+    )
+    assert out["asc"] == str(tmp_path / "m.asc")
+    assert out["rda"] == str(tmp_path / "m.rda")
+    assert Path(out["asc"]).exists() and Path(out["rda"]).exists()
+    types = {v["name"]: v["type"] for v in out["variables"]}
+    assert types == {"Region": "RECODEABLE", "Size": "RECODEABLE",
+                     "Var2": "NUMERIC"}
+
+
+def test_to_asc_rda_string_response_fails_upfront(tmp_path):
+    # the issue #56 failure mode: a response variable read in as strings
+    # (e.g. from a CSV) would be typed RECODEABLE in the .rda and only
+    # fail deep in the engine as "SetTable failed for table 1"
+    micro = {"m": ["a", "b", "a"], "v": ["10", "20", "30"]}
+    with pytest.raises(ValueError, match="must be numeric"):
+        server.tauargus_to_asc_rda(micro, response_var="v",
+                                   asc_filename=str(tmp_path / "m.asc"))
+    assert not (tmp_path / "m.asc").exists()
+
+
+def test_to_asc_rda_numeric_explanatory_fails(tmp_path):
+    # a numeric dimension is rejected by the engine too (SetTable failed)
+    micro = {"m": [1, 2, 1], "v": [10, 20, 30]}
+    with pytest.raises(ValueError, match="categorical"):
+        server.tauargus_to_asc_rda(micro, response_var="v",
+                                   explanatory_vars=["m"],
+                                   asc_filename=str(tmp_path / "m.asc"))
+    assert not (tmp_path / "m.asc").exists()
+
+
+def test_to_asc_rda_unknown_response_lists_columns(tmp_path):
+    with pytest.raises(ValueError, match="nope"):
+        server.tauargus_to_asc_rda(MICRO, response_var="nope",
+                                   asc_filename=str(tmp_path / "m.asc"))
+
+
+def test_to_asc_rda_non_numeric_weight_fails(tmp_path):
+    micro = dict(MICRO)
+    micro["W"] = ["a", "b", "c", "d"]
+    with pytest.raises(ValueError, match="weight"):
+        server.tauargus_to_asc_rda(micro, response_var="Var2", weight_var="W",
+                                   asc_filename=str(tmp_path / "m.asc"))
+
+
+def test_to_asc_rda_rejects_non_parquet_path(tmp_path):
+    csv = tmp_path / "x.csv"
+    csv.write_text("a,v\nx,1\ny,2\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="parquet"):
+        server.tauargus_to_asc_rda(str(csv))
+
+
+def test_to_asc_rda_missing_parquet_raises(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        server.tauargus_to_asc_rda(str(tmp_path / "nope.parquet"))
+
+
 # ===========================================================================
 # tauargus_run_arb (native run, small fixture)
 # ===========================================================================
@@ -418,6 +556,7 @@ def test_server_constructs_with_tools():
     assert isinstance(server.mcp, FastMCP)
     tools = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert tools == {"tauargus_version", "tauargus_explore",
+                     "tauargus_to_asc_rda",
                      "tauargus_build_arb", "tauargus_run_arb",
                      "tauargus_protect", "tauargus_assess",
                      "tauargus_audit", "tauargus_report",
