@@ -617,7 +617,21 @@ class SafetyRuleSet:
         n_req = 0
 
         for rule in rules:
-            args = [int(a) for a in rule.args]
+            args: List[int] = []
+            for a in rule.args:
+                # A bare rule name (e.g. "<SAFETYRULE> ZERO") tokenizes to
+                # an empty argument; convert with a clear error instead of
+                # leaking the raw ValueError from int().
+                if a.strip() == "":
+                    raise BatchError(
+                        f"{rule.kind} rule is missing a parameter "
+                        f"(e.g. P(25,1), FREQ(5,30), ZERO(10))")
+                try:
+                    args.append(int(a))
+                except ValueError:
+                    raise BatchError(
+                        f"{rule.kind} rule parameter {a!r} is not an integer "
+                        f"(e.g. P(25,1), FREQ(5,30), ZERO(10))")
             if rule.kind == "P":
                 if n_pq >= 4:
                     raise BatchError("More than 4 P rules specified.")
