@@ -167,6 +167,44 @@ class TestSafetyRuleGrammar:
         rules = self._parse_rule("WGT(1)")
         assert [ (r.kind, r.args) for r in rules ] == [("WGT", ["1"])]
 
+    def test_bare_rule_name_tokenizes_with_empty_arg(self):
+        # a bare <SAFETYRULE> ZERO (no parentheses) tokenizes to an
+        # empty argument; the param check must not crash on it
+        rules = self._parse_rule("ZERO")
+        assert [(r.kind, r.args) for r in rules] == [("ZERO", [""])]
+
+
+class TestSafetyRuleSetFromRules:
+    """from_rules: malformed parameters get a clear BatchError, not a
+    raw ValueError (bare rule names, empty or non-numeric arguments)."""
+
+    def _rules(self, *specs):
+        from pytauargus.batch import SafetyRule
+        return [SafetyRule(kind=k, args=a) for k, a in specs]
+
+    def test_bare_zero_missing_parameter(self):
+        from pytauargus.engine import SafetyRuleSet
+        with pytest.raises(BatchError, match="missing a parameter"):
+            SafetyRuleSet.from_rules(self._rules(("ZERO", [""])))
+
+    def test_empty_trailing_argument(self):
+        from pytauargus.engine import SafetyRuleSet
+        with pytest.raises(BatchError, match="missing a parameter"):
+            SafetyRuleSet.from_rules(self._rules(("FREQ", ["5", ""])))
+
+    def test_non_numeric_argument(self):
+        from pytauargus.engine import SafetyRuleSet
+        with pytest.raises(BatchError, match="not an integer"):
+            SafetyRuleSet.from_rules(self._rules(("P", ["25", "a"])))
+
+    def test_valid_rules_unchanged(self):
+        from pytauargus.engine import SafetyRuleSet
+        s = SafetyRuleSet.from_rules(self._rules(
+            ("P", ["25", "1"]), ("FREQ", ["5", "20"]), ("ZERO", ["10"])))
+        assert s.pq_p == [25] and s.pq_n == [1]
+        assert s.min_freq == [5] and s.freq_marge == [20]
+        assert s.zero_range == 10.0
+
 
 class TestErrorHandling:
     def test_unknown_keyword(self):
