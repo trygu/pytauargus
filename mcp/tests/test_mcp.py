@@ -143,6 +143,48 @@ def test_build_arb_default_temp_filename(tmp_path):
     assert Path(out["arb"]).exists()
 
 
+def test_build_arb_relative_output_resolves_to_intended_target(tmp_path, monkeypatch):
+    # issue #57: the engine resolves relative <WRITETABLE> names against
+    # the batch file's directory, so a CWD-relative name with the batch in
+    # a subdirectory doubled the path at run time (data/data/tab1.tab).
+    # All MCP path arguments are CWD-relative, so the written target must
+    # resolve (engine semantics) to the CWD-relative location intended.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    out = server.tauargus_build_arb(
+        asc_filename=str(DATA / "tau_testW.asc"),
+        rda_filename=str(DATA / "tau_testW.rda"),
+        explanatory_vars=["Size"],
+        response_var="Var2",
+        safety_rules="P(25,1)",
+        suppress="OPT(1)",
+        output_names=["data/out.tab"],
+        arb_filename="data/batch.arb",
+    )
+    arb = Path(out["arb"])
+    assert arb == tmp_path / "data" / "batch.arb"
+    targets = server._write_table_paths(arb)
+    assert [t["path"] for t in targets] == [str(tmp_path / "data" / "out.tab")]
+    assert out["output_names"] == [str(tmp_path / "data" / "out.tab")]
+
+
+def test_build_arb_relative_output_default_arb(tmp_path, monkeypatch):
+    # with the default temp batch (system temp dir), a relative output
+    # name must still land CWD-relative, not in the temp dir
+    monkeypatch.chdir(tmp_path)
+    out = server.tauargus_build_arb(
+        asc_filename=str(DATA / "tau_testW.asc"),
+        rda_filename=str(DATA / "tau_testW.rda"),
+        explanatory_vars=["Size"],
+        response_var="Var2",
+        safety_rules="P(25,1)",
+        suppress="OPT(1)",
+        output_names=["out.tab"],
+    )
+    targets = server._write_table_paths(Path(out["arb"]))
+    assert [t["path"] for t in targets] == [str(tmp_path / "out.tab")]
+
+
 # ===========================================================================
 # tauargus_run_arb (native run, small fixture)
 # ===========================================================================
