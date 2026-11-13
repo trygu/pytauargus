@@ -16,17 +16,28 @@ and the results stay on the machine that hosts it, and the server makes
 no network calls. You can run it air-gapped, for example in a datacenter
 with an MCP client backed by a local LLM.
 
+An end-to-end demo with synthetic microdata and suggested prompts
+lives in [tauargus-mcp-demo](https://github.com/trygu/tauargus-mcp-demo).
+
 ## What it does
 
-Nine tools cover the workflow.
+Ten tools cover the workflow.
 
 - **`tauargus_version`** reports the `pytauargus` package version and the
   native engine version.
 - **`tauargus_explore`** inspects a microdata dataset and returns its
   variables with their types. It reads `.parquet` files directly and
   `.asc`/`.rda` files through the engine metadata parser.
+- **`tauargus_to_asc_rda`** writes the fixed-width `.asc` data file and
+  its `.rda` metadata sidecar from a `.parquet` path or a column dict;
+  the pair is what the batch flow runs on. Column roles (response,
+  explanatory, weight) can be passed to validate the inferred types up
+  front.
 - **`tauargus_build_arb`** writes a `.arb` batch file from the dataset
-  description (wraps `micro_arb`).
+  description (wraps `micro_arb`). One table, or a list of per-table
+  variable lists; a `recodes` spec applies a global recode (a
+  hierarchical truncation level, or a `.grc` mapping file) before the
+  tables are computed.
 - **`tauargus_run_arb`** runs a `.arb` batch and reports the table files
   it writes.
 - **`tauargus_protect`** protects one or more tables from microdata in a
