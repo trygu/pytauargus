@@ -251,7 +251,9 @@ def build_arb(asc_filename: str, rda_filename: str,
               weighted: Union[bool, List[bool]] = False,
               shadow_var: Optional[List[str]] = None,
               cost_var: Optional[List[str]] = None,
-              arb_filename: Optional[str] = None) -> Dict[str, Any]:
+              arb_filename: Optional[str] = None,
+              recodes: Optional[List[Dict[str, object]]] = None
+              ) -> Dict[str, Any]:
     """Write a ``.arb`` batch file (wraps :func:`pytauargus.arb.micro_arb`).
 
     One table: ``explanatory_vars`` is the flat variable list. Several
@@ -262,6 +264,14 @@ def build_arb(asc_filename: str, rda_filename: str,
     recycling). Relative ``output_names`` are resolved against the
     current working directory (like every other path argument here);
     see :func:`_resolve_path` for why the target is written absolute.
+
+    ``recodes`` is a list of specs for the engine's ``<RECODE>`` command
+    (global recoding, applied before the tables are computed): each spec
+    is a mapping with ``"var"`` and either ``"level"`` (1-9, hierarchical
+    truncation) or ``"file"`` (a ``.grc`` recode file), plus an optional
+    1-based ``"table"`` (default 1). A relative ``file`` is resolved
+    against the current working directory and must exist; a missing file
+    fails up front instead of at batch run time.
     """
     from pytauargus.arb import micro_arb
     res = micro_arb(arb_filename=arb_filename,
@@ -276,12 +286,43 @@ def build_arb(asc_filename: str, rda_filename: str,
                     suppress=suppress,
                     output_names=[_resolve_path(n) for n in output_names],
                     output_type=output_type,
-                    output_options=output_options)
+                    output_options=output_options,
+                    recodes=_resolve_recode_files(recodes)
+                    if recodes is not None else None)
     out = {"arb": res["arb_filename"], "output_names": res["output_names"]}
     _log("build_arb", **out,
          explanatory_vars=list(explanatory_vars),
          response_var=response_var, safety_rules=safety_rules,
-         suppress=suppress, weighted=weighted)
+         suppress=suppress, weighted=weighted,
+         recodes=list(recodes) if recodes is not None else None)
+    return out
+
+
+def _resolve_recode_files(recodes: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    """Resolve the ``.grc`` paths of recode specs (see :func:`_resolve_path`).
+
+    Every path argument of this server is CWD-relative; a recode file
+    that does not exist up front cannot work at batch run time either,
+    so fail here with a clear message instead of mid-run. Structural
+    validation (var/level/table) is :func:`pytauargus.arb.micro_arb`'s.
+    """
+    out: List[Dict[str, object]] = []
+    for i, spec in enumerate(recodes):
+        if not isinstance(spec, dict):
+            raise ValueError(
+                "recodes[%d] must be a mapping with 'var' and 'level' "
+                "or 'file'" % i)
+        file = spec.get("file")
+        if file is not None:
+            if not isinstance(file, str) or not file:
+                raise ValueError(
+                    "recodes[%d].file must be a path to a .grc "
+                    "recode file" % i)
+            resolved = _resolve_path(file)
+            if not Path(resolved).is_file():
+                raise ValueError("recode file not found: %s" % resolved)
+            spec = {**spec, "file": resolved}
+        out.append(spec)
     return out
 
 
@@ -1052,7 +1093,9 @@ _METHODS = [
      "cons": ["Loses classification detail",
               "Not available for ready-made (pre-tabulated) tables"],
      "use": "A first move when the table is more detailed than the release "
-            "needs."},
+            "needs. Applied with tauargus_build_arb's recodes spec (a "
+            "truncation level or a .grc mapping file); the recode runs "
+            "before the tables are computed, so reassess afterwards."},
     {"method": "Optimal",
      "available": True,
      "pros": ["Globally optimal: affects the fewest cells and least "
@@ -1238,6 +1281,15 @@ one output name per table), tauargus_run_arb runs it (the suppression
 solve is the same blocking call: announce it first), and
 tauargus_audit verifies the result.
 
+Global recoding (merging categories, collapsing hierarchy levels) is an
+engine move, applied with tauargus_build_arb's ``recodes`` spec before
+the tables are computed: a truncation level for a hierarchical
+variable, or a .grc file with the mapping (``new : old1, old2`` lines;
+a file starting ``<TREERECODE>`` deactivates the parent codes it
+lists). Recode from the original codes - refining an already applied
+recode is not supported - and re-run assess afterwards: the sensitivity
+of the merged cells is a new result.
+
 Cell status codes (also returned as status_legend in protect results):
 - S  safe: published as is
 - U  unsafe (primary): sensitive, value withheld
@@ -1308,6 +1360,14 @@ margins move.
 Merge row, column or hierarchy categories before suppressing. Reduces
 sensitivity by design and can cut the number of suppressions, at the cost of
 classification detail. Not available for ready-made (pre-tabulated) tables.
+In this build the engine applies the recode as a ``<RECODE>`` batch
+command (the ``recodes`` spec of tauargus_build_arb): a level 1-9 for
+hierarchical truncation, or a .grc file (classic ``new : old1, old2``
+lines; a file starting ``<TREERECODE>`` deactivates the parent codes it
+lists). The recode runs after the microdata is read and before the
+tables are computed. Recode from the original codes: refining an
+already applied recode is not supported. Reassess the recoded table: the
+sensitivity of the merged cells is a new result.
 
 ## Availability in this build
 
@@ -1418,7 +1478,9 @@ def tauargus_build_arb(asc_filename: str, rda_filename: str,
                        weighted: Union[bool, List[bool]] = False,
                        shadow_var: Optional[List[str]] = None,
                        cost_var: Optional[List[str]] = None,
-                       arb_filename: Optional[str] = None) -> Dict[str, Any]:
+                       arb_filename: Optional[str] = None,
+                       recodes: Optional[List[Dict[str, object]]] = None
+                       ) -> Dict[str, Any]:
     """Write a ``.arb`` batch file for microdata (wraps ``micro_arb``).
 
     One table: ``explanatory_vars`` is the flat variable list,
@@ -1434,11 +1496,24 @@ def tauargus_build_arb(asc_filename: str, rda_filename: str,
     absolute targets, because the engine resolves relative
     ``<WRITETABLE>`` names against the batch file's directory. Returns
     the written ``arb`` path and the resolved output names.
+
+    Global recoding: ``recodes`` is a list of recode specs applied
+    before the tables are computed (the engine's ``<RECODE>`` command).
+    Each spec: ``{"var": name}`` plus either ``"level": 1-9`` (truncates
+    a hierarchical variable to that level) or ``"file": path`` (a .grc
+    recode file: classic ``new : old1, old2`` mapping lines, or a file
+    starting ``<TREERECODE>`` whose lines deactivate those parent
+    codes); optional ``"table"`` (1-based table number, default 1).
+    Recode from the original codes - refining an already applied recode
+    is not supported. A relative ``file`` resolves against the current
+    working directory and must exist. After a recode, re-run
+    tauargus_assess: the sensitivity of the merged cells is a new
+    result.
     """
     return build_arb(asc_filename, rda_filename, explanatory_vars,
                      response_var, safety_rules, suppress, output_names,
                      output_type, output_options, weighted, shadow_var,
-                     cost_var, arb_filename)
+                     cost_var, arb_filename, recodes=recodes)
 
 
 @mcp.tool()

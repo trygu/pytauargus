@@ -230,6 +230,83 @@ def test_build_arb_multi_table_per_table_args(tmp_path):
     assert "<SAFETYRULE> P(50,1)" in text
 
 
+def test_build_arb_recode_truncation(tmp_path):
+    # the engine's <RECODE> command (legacy GUI batch); the level form
+    # truncates a hierarchical variable
+    out = server.tauargus_build_arb(
+        asc_filename=str(DATA / "tau_testW.asc"),
+        rda_filename=str(DATA / "tau_testW.rda"),
+        explanatory_vars=["Region"],
+        response_var="Var2",
+        safety_rules="P(25,1)",
+        suppress="OPT(1)",
+        output_names=[str(tmp_path / "out.tab")],
+        recodes=[{"var": "Region", "level": 2}],
+    )
+    text = Path(out["arb"]).read_text(encoding="utf-8")
+    lines = text.splitlines()
+    i = lines.index("<READMICRODATA>")
+    assert lines[i + 1] == "<RECODE> 1, Region, 2"
+    assert lines[i + 2] == "<SUPPRESS> OPT(1)"
+
+
+def test_build_arb_recode_file_resolves_against_cwd(tmp_path, monkeypatch):
+    # a CWD-relative .grc path is resolved up front (like every other
+    # path argument) and written absolute into the batch
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "GK.grc").write_text("1:1-5", encoding="utf-8")
+    out = server.tauargus_build_arb(
+        asc_filename=str(DATA / "tau_testW.asc"),
+        rda_filename=str(DATA / "tau_testW.rda"),
+        explanatory_vars=["Size"],
+        response_var="Var2",
+        safety_rules="P(25,1)",
+        suppress="OPT(1)",
+        output_names=["out.tab"],
+        arb_filename="batch.arb",
+        recodes=[{"var": "Size", "file": "GK.grc"}],
+    )
+    lines = Path(out["arb"]).read_text(encoding="utf-8").splitlines()
+    i = lines.index("<READMICRODATA>")
+    assert lines[i + 1] == '<RECODE> 1, Size, "%s"' % (tmp_path / "GK.grc")
+
+
+def test_build_arb_recode_missing_file_fails_before_writing(tmp_path,
+                                                            monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="recode file not found"):
+        server.tauargus_build_arb(
+            asc_filename=str(DATA / "tau_testW.asc"),
+            rda_filename=str(DATA / "tau_testW.rda"),
+            explanatory_vars=["Size"],
+            response_var="Var2",
+            safety_rules="P(25,1)",
+            suppress="OPT(1)",
+            output_names=["out.tab"],
+            arb_filename="batch.arb",
+            recodes=[{"var": "Size", "file": "nope.grc"}],
+        )
+    assert not (tmp_path / "batch.arb").exists()
+
+
+def test_build_arb_schema_exposes_recodes():
+    tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
+    schema = tools["tauargus_build_arb"].inputSchema
+    # Optional[List[Dict]] renders as anyOf [array of objects, null]
+    recodes = schema["properties"]["recodes"]
+    assert recodes["default"] is None
+    arr = next(b for b in recodes["anyOf"] if b.get("type") == "array")
+    assert arr["items"]["type"] == "object"
+
+
+def test_instructions_cover_global_recode():
+    # the agent must know recoding is an engine move with a concrete
+    # tool path, not an improvise-a-script situation
+    text = server.INSTRUCTIONS.lower()
+    assert "global recoding" in text
+    assert "recodes" in text
+
+
 def test_build_arb_schema_exposes_multi_table():
     # the runtime passes nested lists through regardless of the
     # annotation, so pin the client-facing JSON schema: each

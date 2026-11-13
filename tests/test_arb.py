@@ -267,3 +267,122 @@ def test_micro_arb_single_tab_as_vector(tmp_path, monkeypatch):
     )
     lines = read_lines(res["arb_filename"])
     assert '<SPECIFYTABLE> "REGION""CJ"|"CA"||' in lines
+
+
+# --- recode (the legacy GUI <RECODE> batch command) --------------------------
+# The legacy GUI wrote recodes into the batch after <READMICRODATA> (see the
+# GUI-generated engine data/TestRecode.arb): a classic .grc file, a
+# hierarchical truncation level 1..9, or a <TREERECODE> file. ``micro_arb``
+# emits the same command.
+
+
+def _rec(tmp_path, monkeypatch, **kwargs):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "d.asc").write_text("x")
+    (tmp_path / "d.rda").write_text("x")
+    args = dict(
+        asc_filename="d.asc", rda_filename="d.rda",
+        explanatory_vars=[["REGION"], ["SEXE"]],
+        response_var="CA",
+        safety_rules=["NK(1,85)", "FREQ(3,10)"],
+        suppress="GH(.,100)",
+        output_names=["t1.csv", "t2.csv"],
+        output_type="2",
+    )
+    args.update(kwargs)
+    return micro_arb(**args)
+
+
+def test_micro_arb_recode_truncation(tmp_path, monkeypatch):
+    res = _rec(tmp_path, monkeypatch,
+               recodes=[{"var": "REGION", "level": 2}])
+    lines = read_lines(res["arb_filename"])
+    i = lines.index("<READMICRODATA>")
+    assert lines[i + 1] == "<RECODE> 1, REGION, 2"
+    assert lines[i + 2] == "<SUPPRESS> GH(1,100)"
+
+
+def test_micro_arb_recode_file(tmp_path, monkeypatch):
+    res = _rec(tmp_path, monkeypatch,
+               recodes=[{"var": "REGION", "file": "GK.grc"}])
+    lines = read_lines(res["arb_filename"])
+    i = lines.index("<READMICRODATA>")
+    assert lines[i + 1] == '<RECODE> 1, REGION, "GK.grc"'
+
+
+def test_micro_arb_recode_table_number(tmp_path, monkeypatch):
+    res = _rec(tmp_path, monkeypatch,
+               recodes=[{"var": "SEXE", "file": "IndCode2.grc", "table": 2}])
+    lines = read_lines(res["arb_filename"])
+    i = lines.index("<READMICRODATA>")
+    assert lines[i + 1] == '<RECODE> 2, SEXE, "IndCode2.grc"'
+    assert lines[i + 2] == "<SUPPRESS> GH(1,100)"
+
+
+def test_micro_arb_recode_multiple(tmp_path, monkeypatch):
+    res = _rec(tmp_path, monkeypatch,
+               recodes=[{"var": "REGION", "file": "GK.grc"},
+                        {"var": "SEXE", "level": 1}])
+    lines = read_lines(res["arb_filename"])
+    i = lines.index("<READMICRODATA>")
+    assert lines[i + 1] == '<RECODE> 1, REGION, "GK.grc"'
+    assert lines[i + 2] == "<RECODE> 1, SEXE, 1"
+    assert lines[i + 3] == "<SUPPRESS> GH(1,100)"
+
+
+@pytest.mark.parametrize("recodes", [
+    [{"level": 2}],                                  # missing var
+    [{"var": ""}],                                   # empty var
+    [{"var": 3}],                                    # non-string var
+    [{"var": "A"}],                                  # neither level nor file
+    [{"var": "A", "level": 2, "file": "x.grc"}],     # both
+    [{"var": "A", "level": 0}],                      # below range
+    [{"var": "A", "level": 10}],                     # above range
+    [{"var": "A", "level": "2"}],                    # not an int
+    [{"var": "A", "level": True}],                   # bool is not an int
+    [{"var": "A", "file": ""}],                      # empty file
+    [{"var": "A", "level": 2, "table": 0}],          # table below range
+    [{"var": "A", "level": 2, "table": 3}],          # table above table count
+    [{"var": "A", "level": 2, "table": "1"}],        # table not an int
+    ["not a spec"],                                  # not a dict
+])
+def test_micro_arb_recode_spec_rejected(tmp_path, monkeypatch, recodes):
+    with pytest.raises(ArbError, match="recode"):
+        _rec(tmp_path, monkeypatch, recodes=recodes)
+
+
+def test_recode_batch_runs_and_merges_codes(tmp_path):
+    # End to end: a batch micro_arb wrote with a <RECODE> line runs and
+    # merges the codes exactly as the .grc mapping says (Year 84-88: 85
+    # into 84, 87 and 88 into 86). OPT keeps the run small (the merged
+    # table is too sparse for the solver-free GH path, which fails with
+    # 4007 here); the hierarchical recode forms (truncation level,
+    # <TREERECODE>) are exercised end to end by the legacy GUI-generated
+    # TestRecode.arb, which the conftest engine fixture runs on every
+    # module that uses it.
+    from conftest import DATA
+    from pytauargus.engine import run_batch
+
+    grc = tmp_path / "year.grc"
+    grc.write_text("84:84,85\n86:86,87,88\n", encoding="utf-8")
+    res = micro_arb(
+        asc_filename=str(DATA / "tau_testW.asc"),
+        rda_filename=str(DATA / "tau_testW.rda"),
+        explanatory_vars=[["Year", "Size"]],
+        response_var="Var2",
+        safety_rules="NK(2,75)",
+        suppress="OPT(1)",
+        output_names=[str(tmp_path / "o1.csv")],
+        output_type="2",
+        recodes=[{"var": "Year", "file": str(grc)}],
+    )
+    lines = read_lines(res["arb_filename"])
+    assert '<RECODE> 1, Year, "%s"' % grc in lines
+
+    eng = run_batch(res["arb_filename"])
+    year = eng._metadata.find("Year")
+    assert year.recoded is True
+    ok, n_codes, _ = eng._tau.get_var_number_of_codes(year.index)
+    # total + the two merged codes + the missing code
+    assert ok and n_codes == 4, "Year must hold the merged code set"
+    assert (tmp_path / "o1.csv").is_file()

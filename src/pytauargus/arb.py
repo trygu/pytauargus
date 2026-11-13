@@ -203,6 +203,37 @@ def apriori_batch(ntab: int,
     return out
 
 
+def _recode_line(spec: object, nb_tabul: int) -> str:
+    """Validate one recode spec and render its ``<RECODE>`` batch line.
+
+    Line format mirrors the legacy GUI (data/TestRecode.arb):
+    ``<RECODE> 1, Size, "GK.grc"`` / ``<RECODE> 1, Region, 2``.
+    """
+    if not isinstance(spec, dict):
+        raise ArbError(
+            "recode spec must be a dict with 'var' and 'level' or 'file'")
+    var = spec.get("var")
+    if not isinstance(var, str) or not var:
+        raise ArbError("recode spec needs a non-empty 'var' (variable name)")
+    level = spec.get("level")
+    file = spec.get("file")
+    table = spec.get("table", 1)
+    if (isinstance(table, bool) or not isinstance(table, int)
+            or not 1 <= table <= nb_tabul):
+        raise ArbError("recode 'table' must be an int 1..%d" % nb_tabul)
+    if (level is None) == (file is None):
+        raise ArbError(
+            "recode spec needs exactly one of 'level' (1-9) or 'file' (.grc)")
+    if level is not None:
+        if (isinstance(level, bool) or not isinstance(level, int)
+                or not 1 <= level <= 9):
+            raise ArbError("recode 'level' must be an int 1..9")
+        return "<RECODE> %d, %s, %d" % (table, var, level)
+    if not isinstance(file, str) or not file:
+        raise ArbError("recode 'file' must be a path to a .grc recode file")
+    return '<RECODE> %d, %s, "%s"' % (table, var, file)
+
+
 def micro_arb(arb_filename: Optional[str] = None,
               asc_filename: Optional[str] = None,
               rda_filename: Optional[str] = None,
@@ -218,10 +249,22 @@ def micro_arb(arb_filename: Optional[str] = None,
               output_type: Union[str, Sequence[str]] = "4",
               output_options: Union[str, Sequence[str]] = "",
               apriori: Optional[Union[Sequence[str], Dict[str, object]]] = None,
-              gointeractive: bool = False) -> Dict[str, object]:
+              gointeractive: bool = False,
+              recodes: Optional[Sequence[Dict[str, object]]] = None
+              ) -> Dict[str, object]:
     """Write a Tau-Argus ``.arb`` batch file for microdata.
 
     Port of ``micro_arb.R::micro_arb``. Returns ``{"arb_filename", "output_names"}``.
+
+    ``recodes`` (extension beyond the R source) is a list of specs for the
+    engine's ``<RECODE>`` command, as written by the legacy GUI (see the
+    GUI-generated ``data/TestRecode.arb``). Each spec is a dict with
+    ``"var"`` (the variable name), either ``"level"`` (an int 1..9,
+    hierarchical truncation) or ``"file"`` (a path to a ``.grc`` recode
+    file: classic ``new : old`` mapping lines, or a ``<TREERECODE>`` file),
+    and an optional ``"table"`` (1-based table number, default 1). The
+    ``<RECODE>`` lines are written after ``<READMICRODATA>`` so the recode
+    applies before the tables are computed.
     """
     for name, val in (("asc_filename", asc_filename),
                       ("explanatory_vars", explanatory_vars),
@@ -306,6 +349,11 @@ def micro_arb(arb_filename: Optional[str] = None,
 
     # read...
     res.append("<READMICRODATA>")
+
+    # recode (legacy GUI position: after <READMICRODATA>, before the
+    # tables are computed)
+    for spec in (recodes or []):
+        res.append(_recode_line(spec, nb_tabul))
 
     # apriori (before suppress)
     if apriori is not None:
