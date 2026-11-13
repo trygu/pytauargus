@@ -138,6 +138,16 @@ def test_method_advice_hypercube_notes_flat_table_scope():
     assert "linked" in joined
 
 
+def test_method_advice_recode_names_its_tool_path():
+    # global recoding is available (the engine's <RECODE> command), so the
+    # advice must say HOW an agent applies it, not just that it exists
+    out = server.method_advice(n_dimensions=2)
+    by = {m["method"]: m for m in out["methods"]}
+    rc = by["Global recoding"]
+    assert rc["available"] is True
+    assert "recodes" in rc["use"].lower()
+
+
 def test_method_advice_rejects_bad_dimension_count():
     with pytest.raises(ValueError):
         server.method_advice(n_dimensions=0)
