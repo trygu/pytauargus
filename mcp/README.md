@@ -80,6 +80,13 @@ Ten tools cover the workflow.
   plain words. It previews what a protection run would withhold, so it
   runs first.
 
+Remote microdata: a `.parquet` file can also live behind an `s3://`,
+`s3a://`, `gs://` or `https://` URL. The tools read it natively
+(cloud credentials come from the environment), so the URL is passed
+straight in as the microdata path, without downloading the file.
+Remote inputs are `.parquet` only; for `.asc`/`.rda`, run
+`tauargus_to_asc_rda` on the remote `.parquet` to write the local pair.
+
 The server runs on the stdio transport.
 
 ## Basis

@@ -102,6 +102,91 @@ def test_explore_unsupported_format_raises():
 
 
 # ===========================================================================
+# Remote microdata: s3://, gs://, https:// .parquet URLs are read natively
+# by pyarrow, so the MCP must pass them through to to_microdata instead of a
+# local is_file() check. The agent must not be sent to download the file
+# with an aws client.
+# ===========================================================================
+
+def test_explore_remote_parquet_url_reads_natively(monkeypatch):
+    pytest.importorskip("pyarrow")
+    import pytauargus.dataframe as dfmod
+    seen = []
+
+    def fake(path):
+        seen.append(path)
+        return {"Region": ["Os", "Ws"], "Size": ["1", "2"],
+                "Value": [1.0, 2.0]}
+    monkeypatch.setattr(dfmod, "to_microdata", fake)
+    url = "s3://bucket/key.parquet"
+    out = server.tauargus_explore(url)
+    assert out["format"] == "parquet"
+    assert out["n_rows"] == 2
+    assert seen == [url]  # the URL passed through, not a local path
+    by = {v["name"]: v["type"] for v in out["variables"]}
+    assert by == {"Region": "categorical", "Size": "categorical",
+                  "Value": "numeric"}
+
+
+def test_explore_remote_non_parquet_url_raises_not_fileerror(monkeypatch):
+    # A remote .csv must give a clear "only .parquet" error, not
+    # FileNotFoundError (which sends the agent to download the file).
+    import pytauargus.dataframe as dfmod
+
+    def fake(path):
+        raise AssertionError("to_microdata not expected for a remote .csv")
+    monkeypatch.setattr(dfmod, "to_microdata", fake)
+    with pytest.raises(ValueError, match="parquet"):
+        server.tauargus_explore("s3://bucket/key.csv")
+
+
+def test_to_asc_rda_remote_parquet_url(tmp_path, monkeypatch):
+    pytest.importorskip("pyarrow")
+    import pytauargus.dataframe as dfmod
+    seen = []
+
+    def fake(path):
+        seen.append(path)
+        return {"Region": ["Os", "Ws"], "Size": ["1", "2"],
+                "Value": [1.0, 2.0]}
+    monkeypatch.setattr(dfmod, "to_microdata", fake)
+    monkeypatch.chdir(tmp_path)
+    url = "s3://bucket/key.parquet"
+    out = server.tauargus_to_asc_rda(url, response_var="Value")
+    assert seen == [url]
+    # default output lands in the CWD, named after the URL basename
+    assert Path(out["asc"]).name == "key.asc"
+    assert Path(out["asc"]).is_file()
+    assert Path(out["rda"]).is_file()
+
+
+def test_validate_table_spec_accepts_remote_parquet_url(monkeypatch):
+    import pytauargus.dataframe as dfmod
+    seen = []
+
+    def fake(path):
+        seen.append(path)
+        return {"Region": ["Os", "Ws"], "Size": ["1", "2"],
+                "Value": [1.0, 2.0]}
+    monkeypatch.setattr(dfmod, "to_microdata", fake)
+    url = "s3://bucket/key.parquet"
+    specs = server._validate_table_spec(url, ["Region", "Size"], "Value")
+    assert specs == [["Region", "Size"]]
+    assert url in seen
+
+
+def test_tool_docstrings_advertise_remote_urls():
+    # The model reads these docstrings to decide whether it can hand the
+    # server an s3:// URL directly. Without this, it downloads the file
+    # itself with an aws client.
+    import inspect
+    for name in ("tauargus_explore", "tauargus_to_asc_rda",
+                 "tauargus_protect", "tauargus_assess"):
+        doc = (inspect.getdoc(getattr(server, name)) or "").lower()
+        assert "s3" in doc, f"{name} docstring does not mention s3 support"
+
+
+# ===========================================================================
 # tauargus_build_arb
 # ===========================================================================
 
