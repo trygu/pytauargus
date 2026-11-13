@@ -85,18 +85,18 @@ def explore_dataset(microdata: str) -> Dict[str, Any]:
     return res
 
 
-def _resolve_output_name(name: str) -> str:
-    """A ``<WRITETABLE>`` target as the engine will resolve it (issue #57).
+def _resolve_path(name: str) -> str:
+    """A path argument as the engine will see it (issue #57).
 
     Every path argument of this server is CWD-relative, but the engine
     resolves *relative* ``<WRITETABLE>`` names against the batch file's
     directory. A CWD-relative name written verbatim therefore doubles the
     directory when the batch lives in a subdirectory: ``data/tab1.tab``
     with the batch in ``data/`` becomes ``data/data/tab1.tab`` at run
-    time. Resolving against the
-    CWD up front makes the written target absolute, so the engine lands
-    it exactly where the caller meant - the same behaviour ``norm_path``
-    already gives the existing ``.asc``/``.rda`` input files.
+    time. Resolving against the CWD up front makes the written target
+    absolute, so the engine lands it exactly where the caller meant -
+    the same behaviour ``norm_path`` already gives the existing
+    ``.asc``/``.rda`` input files once they exist.
     """
     p = Path(os.path.expanduser(name))
     if not p.is_absolute():
@@ -104,19 +104,164 @@ def _resolve_output_name(name: str) -> str:
     return str(p)
 
 
+def _is_number(v) -> bool:
+    # mirror pytauargus.micro._is_number: real numbers only, no bool
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _col_is_numeric(values: List) -> bool:
+    return all(_is_number(v) for v in values)
+
+
+def _validate_asc_rda_roles(microdata: Dict[str, list],
+                            response_var: Optional[str] = None,
+                            explanatory_vars: Optional[List[str]] = None,
+                            weight_var: Optional[str] = None,
+                            holding_var: Optional[str] = None) -> None:
+    """Up-front column type validation for the ``.asc``/``.rda`` writer.
+
+    The same convention as :func:`_validate_table_spec`: fail before
+    anything is written, with a self-correcting message, instead of
+    letting a wrong type reach the engine as an opaque ``SetTable
+    failed`` (issue #56).
+    """
+    columns = list(microdata)
+
+    def require(name: Optional[str], role: str) -> None:
+        if name is not None and name not in microdata:
+            raise ValueError(
+                f"unknown {role} variable {name!r}; "
+                f"available columns: {', '.join(columns)}")
+
+    require(response_var, "response")
+    require(weight_var, "weight")
+    require(holding_var, "holding")
+    for v in explanatory_vars or []:
+        require(v, "explanatory")
+
+    used: Dict[str, str] = {}
+    for col, role in ((response_var, "response"), (weight_var, "weight"),
+                      (holding_var, "holding"),
+                      *((v, "explanatory") for v in explanatory_vars or [])):
+        if col is None:
+            continue
+        if col in used:
+            raise ValueError(
+                f"column {col!r} is used as both the {used[col]} "
+                f"and the {role} variable")
+        used[col] = role
+
+    if response_var is not None:
+        vals = microdata[response_var]
+        if not _col_is_numeric(vals):
+            bad = [v for v in vals if not _is_number(v)][:5]
+            raise ValueError(
+                f"response variable {response_var!r} must be numeric; "
+                f"non-numeric values: {bad!r}; a string column is typed "
+                "RECODEABLE in the .rda and the engine rejects it at "
+                "SetTable time, so convert the values to numbers")
+    for v in explanatory_vars or []:
+        if _col_is_numeric(microdata[v]):
+            raise ValueError(
+                f"explanatory variable {v!r} is all numeric; the engine "
+                "rejects numeric dimensions (SetTable failed); keep it "
+                "categorical by passing its values as strings")
+    for role, col in (("weight", weight_var), ("holding", holding_var)):
+        if col is not None and not _col_is_numeric(microdata[col]):
+            raise ValueError(
+                f"the {role} variable {col!r} must be numeric")
+
+
+def to_asc_rda(microdata: Union[str, Dict[str, list]],
+               response_var: Optional[str] = None,
+               explanatory_vars: Optional[List[str]] = None,
+               weight_var: Optional[str] = None,
+               holding_var: Optional[str] = None,
+               asc_filename: Optional[str] = None,
+               rda_filename: Optional[str] = None,
+               decimals: Optional[int] = None) -> Dict[str, Any]:
+    """Write the ``.asc`` + ``.rda`` microdata pair (issue #56).
+
+    Wraps :func:`pytauargus.micro.micro_asc_rda`: a ``.parquet`` path or
+    a column dict in, a fixed-width ``.asc`` plus its ``.rda`` metadata
+    out, ready for :func:`build_arb`. Column types are inferred like the
+    R writer: an all-numeric column is ``NUMERIC``, anything else
+    ``RECODEABLE``; ``weight_var``/``holding_var`` override to
+    ``WEIGHT``/``HOLDING``.
+    """
+    from pytauargus.dataframe import to_microdata
+    from pytauargus.micro import micro_asc_rda
+
+    if isinstance(microdata, str):
+        p = Path(os.path.expanduser(microdata))
+        if not p.is_file():
+            raise FileNotFoundError(f"microdata file not found: {p}")
+        if p.suffix.lower() != ".parquet":
+            raise ValueError(
+                "only .parquet paths are supported for the writer; "
+                f"got {p.suffix!r}; pass a column dict for other "
+                "tabular formats")
+        cols = to_microdata(str(p))
+        if asc_filename is None:
+            asc_filename = str(p.with_suffix(".asc"))
+    else:
+        cols = to_microdata(microdata)
+
+    _validate_asc_rda_roles(cols, response_var=response_var,
+                            explanatory_vars=explanatory_vars,
+                            weight_var=weight_var, holding_var=holding_var)
+
+    if asc_filename is not None:
+        asc_filename = _resolve_path(asc_filename)
+    if rda_filename is not None:
+        rda_filename = _resolve_path(rda_filename)
+
+    res = micro_asc_rda(cols, asc_filename=asc_filename,
+                        rda_filename=rda_filename,
+                        weight_var=weight_var, holding_var=holding_var,
+                        decimals=decimals)
+
+    # report the types exactly as written; empty columns are dropped
+    # by micro_asc_rda (with a warning) and stay out of the report
+    variables = []
+    for c, vals in cols.items():
+        if all(v is None or v == "" for v in vals):
+            continue
+        t = "NUMERIC" if _col_is_numeric(vals) else "RECODEABLE"
+        if weight_var == c:
+            t = "WEIGHT"
+        if holding_var == c:
+            t = "HOLDING"
+        variables.append({"name": c, "type": t})
+
+    out = {"asc": res["asc_filename"], "rda": res["rda_filename"],
+           "variables": variables}
+    _log("to_asc_rda", **out)
+    return out
+
+
 def build_arb(asc_filename: str, rda_filename: str,
-              explanatory_vars: List[str], response_var: str,
-              safety_rules: str, suppress: str, output_names: List[str],
-              output_type: str = "4", output_options: str = "",
-              weighted: bool = False,
+              explanatory_vars: List[Union[str, List[str]]],
+              response_var: Union[str, List[str]],
+              safety_rules: Union[str, List[str]],
+              suppress: Union[str, List[str]],
+              output_names: List[str],
+              output_type: Union[str, List[str]] = "4",
+              output_options: Union[str, List[str]] = "",
+              weighted: Union[bool, List[bool]] = False,
               shadow_var: Optional[List[str]] = None,
               cost_var: Optional[List[str]] = None,
               arb_filename: Optional[str] = None) -> Dict[str, Any]:
     """Write a ``.arb`` batch file (wraps :func:`pytauargus.arb.micro_arb`).
 
-    Relative ``output_names`` are resolved against the current working
-    directory (like every other path argument here); see
-    :func:`_resolve_output_name` for why the target is written absolute.
+    One table: ``explanatory_vars`` is the flat variable list. Several
+    tables: a list of per-table variable lists, with one ``output_names``
+    entry per table; a single ``response_var``, ``safety_rules``,
+    ``suppress``, ``output_type``, ``output_options`` or ``weighted``
+    covers all tables, a list gives one per table (``micro_arb``
+    recycling). Relative ``output_names`` are resolved against the
+    current working directory (like every other path argument here);
+    see :func:`_resolve_path` for why the target is written absolute.
     """
     from pytauargus.arb import micro_arb
     res = micro_arb(arb_filename=arb_filename,
@@ -129,7 +274,7 @@ def build_arb(asc_filename: str, rda_filename: str,
                     safety_rules=safety_rules,
                     weighted=weighted,
                     suppress=suppress,
-                    output_names=[_resolve_output_name(n) for n in output_names],
+                    output_names=[_resolve_path(n) for n in output_names],
                     output_type=output_type,
                     output_options=output_options)
     out = {"arb": res["arb_filename"], "output_names": res["output_names"]}
@@ -1082,6 +1227,17 @@ Workflow (consult the statistician as you go):
    audit shows a value can still be reconstructed, hold and flag it rather
    than present a leaking table as safe.
 
+Batch flow (a re-runnable, multi-table alternative to step 5): the
+statistician gets a plain-text .arb batch instead of a one-shot protect
+call. The batch runs on a native .asc/.rda pair: tauargus_to_asc_rda
+writes that pair from a .parquet path or a column dict (pass the
+response/explanatory/weight roles to have the column types validated
+up front), tauargus_build_arb writes the .arb (one table: a flat
+variable list; several tables: a list of per-table variable lists with
+one output name per table), tauargus_run_arb runs it (the suppression
+solve is the same blocking call: announce it first), and
+tauargus_audit verifies the result.
+
 Cell status codes (also returned as status_legend in protect results):
 - S  safe: published as is
 - U  unsafe (primary): sensitive, value withheld
@@ -1219,26 +1375,65 @@ def tauargus_explore(microdata: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
+def tauargus_to_asc_rda(microdata: Union[str, Dict[str, List[Any]]],
+                        response_var: Optional[str] = None,
+                        explanatory_vars: Optional[List[str]] = None,
+                        weight_var: Optional[str] = None,
+                        holding_var: Optional[str] = None,
+                        asc_filename: Optional[str] = None,
+                        rda_filename: Optional[str] = None,
+                        decimals: Optional[int] = None) -> Dict[str, Any]:
+    """Write the ``.asc`` + ``.rda`` microdata pair for the batch flow.
+
+    Accepts a ``.parquet`` path or a column dict (column name to list of
+    values) and writes the fixed-width ``.asc`` plus its ``.rda``
+    metadata, the input to tauargus_build_arb. With a ``.parquet``
+    input and no ``asc_filename``, the pair is written next to the
+    input file.
+
+    Column types are inferred from the values: an all-numeric column
+    becomes NUMERIC, anything else RECODEABLE (categorical). Pass
+    ``response_var`` (and optionally ``explanatory_vars``,
+    ``weight_var``, ``holding_var``) to validate the roles up front: a
+    response variable read in as strings would otherwise be typed
+    RECODEABLE and only fail deep in the engine (SetTable failed).
+    Returns the written paths and the inferred type of each variable.
+    """
+    return to_asc_rda(microdata, response_var=response_var,
+                      explanatory_vars=explanatory_vars,
+                      weight_var=weight_var, holding_var=holding_var,
+                      asc_filename=asc_filename, rda_filename=rda_filename,
+                      decimals=decimals)
+
+
+@mcp.tool()
 def tauargus_build_arb(asc_filename: str, rda_filename: str,
-                       explanatory_vars: List[str], response_var: str,
-                       safety_rules: str, suppress: str,
+                       explanatory_vars: List[Union[str, List[str]]],
+                       response_var: Union[str, List[str]],
+                       safety_rules: Union[str, List[str]],
+                       suppress: Union[str, List[str]],
                        output_names: List[str],
-                       output_type: str = "4", output_options: str = "",
-                       weighted: bool = False,
+                       output_type: Union[str, List[str]] = "4",
+                       output_options: Union[str, List[str]] = "",
+                       weighted: Union[bool, List[bool]] = False,
                        shadow_var: Optional[List[str]] = None,
                        cost_var: Optional[List[str]] = None,
                        arb_filename: Optional[str] = None) -> Dict[str, Any]:
     """Write a ``.arb`` batch file for microdata (wraps ``micro_arb``).
 
-    ``explanatory_vars`` is the flat variable list of one table,
+    One table: ``explanatory_vars`` is the flat variable list,
     ``response_var`` its response, ``safety_rules`` a rule string such
     as ``"P(25,1)"``, ``suppress`` a suppression spec such as
-    ``"OPT(1)"``, and ``output_names`` the target table files. Relative
-    names (as for every path argument here) are resolved against the
-    current working directory and written as absolute targets, because
-    the engine resolves relative ``<WRITETABLE>`` names against the
-    batch file's directory. Returns the written ``arb`` path and the
-    resolved output names.
+    ``"OPT(1)"``, and ``output_names`` the target table file. Several
+    tables: ``explanatory_vars`` is a list of per-table variable lists,
+    with one ``output_names`` entry per table; a single
+    ``response_var``/``safety_rules``/``suppress``/``output_type``/
+    ``output_options``/``weighted`` covers all tables, a list gives one
+    per table. Relative names (as for every path argument here) are
+    resolved against the current working directory and written as
+    absolute targets, because the engine resolves relative
+    ``<WRITETABLE>`` names against the batch file's directory. Returns
+    the written ``arb`` path and the resolved output names.
     """
     return build_arb(asc_filename, rda_filename, explanatory_vars,
                      response_var, safety_rules, suppress, output_names,
