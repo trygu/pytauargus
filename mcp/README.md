@@ -89,7 +89,8 @@ statistical disclosure control practice as documented in the legacy
 tau-ARGUS 4.1 manual. The method trade-offs follow the overview in
 Meindl (2025), *Statistical Disclosure Control. Improving tools and
 methods to facilitate the application*, doctoral thesis, Johannes
-Kepler University Linz.
+Kepler University Linz:
+<https://epub.jku.at/obvulihs/content/titleinfo/11740128>.
 
 ## Install
 
