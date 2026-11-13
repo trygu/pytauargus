@@ -15,6 +15,7 @@ is the only place that imports ``mcp``. Start the server with the
 from __future__ import annotations
 
 import datetime
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -84,6 +85,25 @@ def explore_dataset(microdata: str) -> Dict[str, Any]:
     return res
 
 
+def _resolve_output_name(name: str) -> str:
+    """A ``<WRITETABLE>`` target as the engine will resolve it (issue #57).
+
+    Every path argument of this server is CWD-relative, but the engine
+    resolves *relative* ``<WRITETABLE>`` names against the batch file's
+    directory. A CWD-relative name written verbatim therefore doubles the
+    directory when the batch lives in a subdirectory: ``data/tab1.tab``
+    with the batch in ``data/`` becomes ``data/data/tab1.tab`` at run
+    time. Resolving against the
+    CWD up front makes the written target absolute, so the engine lands
+    it exactly where the caller meant - the same behaviour ``norm_path``
+    already gives the existing ``.asc``/``.rda`` input files.
+    """
+    p = Path(os.path.expanduser(name))
+    if not p.is_absolute():
+        p = Path.cwd() / p
+    return str(p)
+
+
 def build_arb(asc_filename: str, rda_filename: str,
               explanatory_vars: List[str], response_var: str,
               safety_rules: str, suppress: str, output_names: List[str],
@@ -92,7 +112,12 @@ def build_arb(asc_filename: str, rda_filename: str,
               shadow_var: Optional[List[str]] = None,
               cost_var: Optional[List[str]] = None,
               arb_filename: Optional[str] = None) -> Dict[str, Any]:
-    """Write a ``.arb`` batch file (wraps :func:`pytauargus.arb.micro_arb`)."""
+    """Write a ``.arb`` batch file (wraps :func:`pytauargus.arb.micro_arb`).
+
+    Relative ``output_names`` are resolved against the current working
+    directory (like every other path argument here); see
+    :func:`_resolve_output_name` for why the target is written absolute.
+    """
     from pytauargus.arb import micro_arb
     res = micro_arb(arb_filename=arb_filename,
                     asc_filename=asc_filename,
@@ -104,7 +129,7 @@ def build_arb(asc_filename: str, rda_filename: str,
                     safety_rules=safety_rules,
                     weighted=weighted,
                     suppress=suppress,
-                    output_names=output_names,
+                    output_names=[_resolve_output_name(n) for n in output_names],
                     output_type=output_type,
                     output_options=output_options)
     out = {"arb": res["arb_filename"], "output_names": res["output_names"]}
@@ -1208,8 +1233,12 @@ def tauargus_build_arb(asc_filename: str, rda_filename: str,
     ``explanatory_vars`` is the flat variable list of one table,
     ``response_var`` its response, ``safety_rules`` a rule string such
     as ``"P(25,1)"``, ``suppress`` a suppression spec such as
-    ``"OPT(1)"``, and ``output_names`` the target table files. Returns
-    the written ``arb`` path and the output names.
+    ``"OPT(1)"``, and ``output_names`` the target table files. Relative
+    names (as for every path argument here) are resolved against the
+    current working directory and written as absolute targets, because
+    the engine resolves relative ``<WRITETABLE>`` names against the
+    batch file's directory. Returns the written ``arb`` path and the
+    resolved output names.
     """
     return build_arb(asc_filename, rda_filename, explanatory_vars,
                      response_var, safety_rules, suppress, output_names,
