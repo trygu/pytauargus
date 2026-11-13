@@ -44,25 +44,49 @@ def _parquet_column_type(values: List[Any]) -> str:
     return "numeric"
 
 
+# Remote URL forms the parquet reader resolves natively (S3/GCS/HTTPS),
+# mirroring pytauargus.cli._URL_PREFIXES. Cloud credentials come from
+# the environment, as pyarrow requires them: the tools pass the URL
+# through to the reader, they never download the file themselves.
+_URL_PREFIXES = ("s3://", "s3a://", "gs://", "http://", "https://",
+                 "file://")
+
+
+def _is_url(name: str) -> bool:
+    return name.lower().startswith(_URL_PREFIXES)
+
+
 def explore_dataset(microdata: str) -> Dict[str, Any]:
     """Inspect a dataset and return its variables with their types.
 
     ``.parquet`` files are read with :func:`to_microdata` (column types
     inferred from the values); ``.asc``/``.rda`` files are read through
     the engine metadata parser, so variable types are the engine ones
-    (CATEGORICAL, RESPONSE, WEIGHT, ...).
+    (CATEGORICAL, RESPONSE, WEIGHT, ...). A remote ``s3://``,
+    ``s3a://``, ``gs://`` or ``https://`` URL to a ``.parquet`` file is
+    read natively (credentials from the environment); remote inputs are
+    ``.parquet`` only, because the ``.asc``/``.rda`` parser needs the
+    pair on local disk.
     """
     path = Path(microdata)
-    if not path.is_file():
-        raise FileNotFoundError(f"microdata file not found: {path}")
+    remote = _is_url(microdata)
     suffix = path.suffix.lower()
+    if remote:
+        if suffix != ".parquet":
+            raise ValueError(
+                f"remote microdata is only supported for .parquet; got "
+                f"{suffix!r} in {microdata}. For .asc/.rda, pass a local "
+                "path to the pair (tauargus_to_asc_rda can write it "
+                "from a remote .parquet).")
+    elif not path.is_file():
+        raise FileNotFoundError(f"microdata file not found: {path}")
     if suffix == ".parquet":
         from pytauargus.dataframe import to_microdata
-        micro = to_microdata(str(path))
+        micro = to_microdata(microdata)
         variables = [{"name": name, "type": _parquet_column_type(vals)}
                      for name, vals in micro.items()]
         n_rows = len(next(iter(micro.values()))) if micro else 0
-        res = {"path": str(path), "format": "parquet", "n_rows": n_rows,
+        res = {"path": microdata, "format": "parquet", "n_rows": n_rows,
                "variables": variables}
         _log("explore", **res)
         return res
@@ -182,28 +206,34 @@ def to_asc_rda(microdata: Union[str, Dict[str, list]],
                decimals: Optional[int] = None) -> Dict[str, Any]:
     """Write the ``.asc`` + ``.rda`` microdata pair (issue #56).
 
-    Wraps :func:`pytauargus.micro.micro_asc_rda`: a ``.parquet`` path or
-    a column dict in, a fixed-width ``.asc`` plus its ``.rda`` metadata
-    out, ready for :func:`build_arb`. Column types are inferred like the
-    R writer: an all-numeric column is ``NUMERIC``, anything else
-    ``RECODEABLE``; ``weight_var``/``holding_var`` override to
-    ``WEIGHT``/``HOLDING``.
+    Wraps :func:`pytauargus.micro.micro_asc_rda`: a ``.parquet`` path
+    (or an ``s3://``, ``s3a://``, ``gs://`` or ``https://`` URL, read
+    natively) or a column dict in, a fixed-width ``.asc`` plus its
+    ``.rda`` metadata out, ready for :func:`build_arb`. Column types
+    are inferred like the R writer: an all-numeric column is
+    ``NUMERIC``, anything else ``RECODEABLE``;
+    ``weight_var``/``holding_var`` override to ``WEIGHT``/``HOLDING``.
     """
     from pytauargus.dataframe import to_microdata
     from pytauargus.micro import micro_asc_rda
 
     if isinstance(microdata, str):
         p = Path(os.path.expanduser(microdata))
-        if not p.is_file():
+        remote = _is_url(microdata)
+        if not remote and not p.is_file():
             raise FileNotFoundError(f"microdata file not found: {p}")
         if p.suffix.lower() != ".parquet":
             raise ValueError(
-                "only .parquet paths are supported for the writer; "
-                f"got {p.suffix!r}; pass a column dict for other "
+                "only .parquet inputs are supported for the writer (a "
+                "local path or an s3://, s3a://, gs:// or https:// "
+                f"URL); got {p.suffix!r}; pass a column dict for other "
                 "tabular formats")
-        cols = to_microdata(str(p))
+        cols = to_microdata(microdata)
         if asc_filename is None:
-            asc_filename = str(p.with_suffix(".asc"))
+            if remote:
+                asc_filename = str(Path.cwd() / p.with_suffix(".asc").name)
+            else:
+                asc_filename = str(p.with_suffix(".asc"))
     else:
         cols = to_microdata(microdata)
 
@@ -423,14 +453,16 @@ def _validate_table_spec(microdata, tables, response) -> List[List[str]]:
     from pytauargus.dataframe import to_microdata
 
     if isinstance(microdata, str):
+        remote = _is_url(microdata)
         mp = Path(microdata)
-        if not mp.is_file():
+        if not remote and not mp.is_file():
             raise FileNotFoundError(f"microdata file not found: {mp}")
         if mp.suffix.lower() != ".parquet":
             raise ValueError(
                 f"unsupported microdata format {mp.suffix!r} "
-                "(expected a .parquet path or a dict of column to list)")
-        columns = list(to_microdata(str(mp)))
+                "(expected a .parquet path (local or an s3://, gs://, "
+                "https:// URL) or a dict of column to list)")
+        columns = list(to_microdata(microdata))
     else:
         columns = list(to_microdata(microdata))
 
@@ -493,9 +525,10 @@ def protect_tables(microdata: Union[str, Dict[str, List[Any]]],
                    workdir: Optional[str] = None) -> Dict[str, Any]:
     """One-shot protection (wraps :func:`pytauargus.protect`).
 
-    ``tables`` is a flat list of explanatory variable names (one table)
-    or a list of per-table lists (several tables); ``response`` is a
-    numeric column. Variable and response names are validated against
+    ``microdata`` is a ``.parquet`` path (local or a remote URL, read
+    natively) or a column dict. ``tables`` is a flat list of
+    explanatory variable names (one table) or a list of per-table lists
+    (several tables); ``response`` is a numeric column. Variable and response names are validated against
     the microdata columns before the engine runs. Returns per-table cell
     counts, status counts, the unsafe (``U``) and secondary (``M``)
     cells, and all produced file paths.
@@ -1281,6 +1314,13 @@ one output name per table), tauargus_run_arb runs it (the suppression
 solve is the same blocking call: announce it first), and
 tauargus_audit verifies the result.
 
+Remote microdata: a .parquet file can also live behind an s3://, s3a://,
+gs:// or https:// URL. The reader fetches it natively (cloud
+credentials come from the environment), so pass the URL straight in as
+the microdata path - never download the file or install a cloud client
+first. Remote inputs are .parquet only: for .asc/.rda, use
+tauargus_to_asc_rda on the remote .parquet to write the local pair.
+
 Global recoding (merging categories, collapsing hierarchy levels) is an
 engine move, applied with tauargus_build_arb's ``recodes`` spec before
 the tables are computed: a truncation level for a hierarchical
@@ -1428,8 +1468,12 @@ def tauargus_explore(microdata: str) -> Dict[str, Any]:
 
     ``microdata`` is a path to a ``.parquet`` file, or to the engine
     ``.asc`` fixed-width file (its sibling ``.rda`` metadata is used),
-    or directly to a ``.rda`` metadata file. Returns the variable names
-    with their types, and the row count for ``.parquet``.
+    or directly to a ``.rda`` metadata file. A remote ``s3://``,
+    ``s3a://``, ``gs://`` or ``https://`` URL to a ``.parquet`` file is
+    read natively (cloud credentials come from the environment): pass
+    the URL straight in as ``microdata``, do not download the file
+    first. Remote inputs are ``.parquet`` only. Returns the variable
+    names with their types, and the row count for ``.parquet``.
     """
     return explore_dataset(microdata)
 
@@ -1449,7 +1493,12 @@ def tauargus_to_asc_rda(microdata: Union[str, Dict[str, List[Any]]],
     values) and writes the fixed-width ``.asc`` plus its ``.rda``
     metadata, the input to tauargus_build_arb. With a ``.parquet``
     input and no ``asc_filename``, the pair is written next to the
-    input file.
+    input file; with a remote input, to the current working directory.
+
+    A remote ``s3://``, ``s3a://``, ``gs://`` or ``https://`` URL to a
+    ``.parquet`` file is read natively (cloud credentials come from the
+    environment): pass the URL straight in, do not download the file
+    first. This is how to bring remote microdata into the batch flow.
 
     Column types are inferred from the values: an all-numeric column
     becomes NUMERIC, anything else RECODEABLE (categorical). Pass
@@ -1534,13 +1583,16 @@ def tauargus_protect(microdata: Union[str, Dict[str, List[Any]]],
     """Protect one or more tables from microdata in a single call.
 
     ``microdata`` is a ``.parquet`` path or a dict of column to value
-    lists. ``tables`` is a flat list of explanatory variables (one
-    table) or a list of per-table lists. ``response`` names the numeric
-    response column. The variable and response names are validated
-    against the microdata columns before the engine runs, with the
-    available columns named in the error. Returns per-table cell
-    counts, status counts, the unsafe and secondary cells, and all
-    produced file paths.
+    lists. A remote ``s3://``, ``s3a://``, ``gs://`` or ``https://``
+    URL to a ``.parquet`` file is read natively (cloud credentials come
+    from the environment): pass the URL straight in, do not download
+    the file first. ``tables`` is a flat list of explanatory variables
+    (one table) or a list of per-table lists. ``response`` names the
+    numeric response column. The variable and response names are
+    validated against the microdata columns before the engine runs,
+    with the available columns named in the error. Returns per-table
+    cell counts, status counts, the unsafe and secondary cells, and
+    all produced file paths.
     """
     return protect_tables(microdata, tables, response,
                           safety_rules=safety_rules, suppress=suppress,
@@ -1554,8 +1606,10 @@ def tauargus_assess(microdata: Union[str, Dict[str, List[Any]]],
                     workdir: Optional[str] = None) -> Dict[str, Any]:
     """Run the safety rules without suppressing: what is sensitive, and why.
 
-    Same inputs as tauargus_protect except the suppression spec; the
-    variable and response names are validated the same way. Returns,
+    Same inputs as tauargus_protect except the suppression spec,
+    including a remote ``s3://``, ``gs://`` or ``https://`` ``.parquet``
+    URL (read natively, no download). The variable and response names
+    are validated the same way. Returns,
     per table, the cells the rules flag (``U`` sensitive, ``E`` empty)
     with their value, contributor count and the plain-language reason
     each is sensitive (safety rule, frequency, singleton, zero,
