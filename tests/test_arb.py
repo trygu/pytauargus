@@ -396,3 +396,38 @@ def test_recode_batch_runs_and_merges_codes(tmp_path):
     # total + the two merged codes + the missing code
     assert ok and n_codes == 4, "Year must hold the merged code set"
     assert (tmp_path / "o1.csv").is_file()
+
+
+def test_recode_zero_missing_batch_runs(tmp_path):
+    # A .rda with no missing codes (the micro_asc_rda default for
+    # categorical columns) must be recodable end to end. The legacy
+    # assertion in SetCode2Recode required 1-2 missing codes and aborted
+    # the process on the mcp recode-merge scenario (batch recode of a
+    # demo .asc/.rda pair with no missing values).
+    from pytauargus.engine import run_batch
+    from pytauargus.micro import micro_asc_rda
+
+    cols = {"cat": ["a1", "a2", "b1", "a1", "a2"],
+            "val": [1, 1, 1, 1, 1]}
+    pair = micro_asc_rda(cols, asc_filename=str(tmp_path / "m.asc"),
+                         rda_filename=str(tmp_path / "m.rda"))
+    grc = tmp_path / "merge.grc"
+    grc.write_text("z9:a1,a2\n", encoding="utf-8")
+    res = micro_arb(
+        asc_filename=pair["asc_filename"],
+        rda_filename=pair["rda_filename"],
+        explanatory_vars=[["cat"]],
+        response_var="val",
+        safety_rules="P(25,1)",
+        suppress="OPT(1)",
+        output_names=[str(tmp_path / "o1.tab")],
+        output_type="4",
+        recodes=[{"var": "cat", "file": str(grc)}],
+    )
+    eng = run_batch(res["arb_filename"])
+    cat = eng._metadata.find("cat")
+    assert cat.recoded is True
+    ok, n_codes, _ = eng._tau.get_var_number_of_codes(cat.index)
+    # total + the merged code + the untouched code (no missing codes)
+    assert ok and n_codes == 3, "cat must hold the merged code set"
+    assert (tmp_path / "o1.tab").is_file()
