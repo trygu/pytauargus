@@ -315,6 +315,45 @@ def test_build_arb_multi_table_per_table_args(tmp_path):
     assert "<SAFETYRULE> P(50,1)" in text
 
 
+def test_build_arb_multi_table_identical_suppress_renumbers(tmp_path):
+    # a per-table list repeating one spec is the single-spec case
+    # spelled out per table: collapse it so the table number (first
+    # parenthesised argument) is renumbered 1..n. Verbatim, every
+    # <SUPPRESS> line targets table 1, the engine re-solves table 1 and
+    # fails the second solve with "FullJJ failed (code 5008): Couldn't
+    # load JJ-routines" while table 2 is never protected (2026-11-15
+    # monkey run, batch_rerun scenario).
+    out = server.tauargus_build_arb(
+        asc_filename=str(DATA / "tau_testW.asc"),
+        rda_filename=str(DATA / "tau_testW.rda"),
+        explanatory_vars=[["Size"], ["Size", "Region"]],
+        response_var="Var2",
+        safety_rules="P(25,1)",
+        suppress=["OPT(1)", "OPT(1)"],
+        output_names=[str(tmp_path / "t1.tab"), str(tmp_path / "t2.tab")],
+    )
+    text = Path(out["arb"]).read_text(encoding="utf-8")
+    assert "<SUPPRESS> OPT(1)" in text
+    assert "<SUPPRESS> OPT(2)" in text
+
+
+def test_build_arb_multi_table_distinct_suppress_verbatim(tmp_path):
+    # a per-table list with distinct specs is a deliberate per-table
+    # batch spec and passes through verbatim (R semantics)
+    out = server.tauargus_build_arb(
+        asc_filename=str(DATA / "tau_testW.asc"),
+        rda_filename=str(DATA / "tau_testW.rda"),
+        explanatory_vars=[["Size"], ["Size", "Region"]],
+        response_var="Var2",
+        safety_rules="P(25,1)",
+        suppress=["MOD(1)", "OPT(2)"],
+        output_names=[str(tmp_path / "t1.tab"), str(tmp_path / "t2.tab")],
+    )
+    text = Path(out["arb"]).read_text(encoding="utf-8")
+    assert "<SUPPRESS> MOD(1)" in text
+    assert "<SUPPRESS> OPT(2)" in text
+
+
 def test_build_arb_recode_truncation(tmp_path):
     # the engine's <RECODE> command (legacy GUI batch); the level form
     # truncates a hierarchical variable
