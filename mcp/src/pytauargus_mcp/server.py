@@ -302,8 +302,21 @@ def build_arb(asc_filename: str, rda_filename: str,
     1-based ``"table"`` (default 1). A relative ``file`` is resolved
     against the current working directory and must exist; a missing file
     fails up front instead of at batch run time.
+
+    A per-table ``suppress`` list whose entries are all identical is the
+    single-spec case spelled out per table, so it is collapsed to the
+    single spec before generation: ``micro_arb`` then renumbers the
+    table number (first parenthesised argument) to 1, 2, 3... per
+    table. Verbatim, every ``<SUPPRESS>`` line would target table 1, the
+    engine re-solves table 1 and fails the second solve with "FullJJ
+    failed (code 5008): Couldn't load JJ-routines" while the remaining
+    tables are never protected.
     """
     from pytauargus.arb import micro_arb
+    if (isinstance(suppress, list)
+            and len(suppress) > 1
+            and all(s == suppress[0] for s in suppress)):
+        suppress = suppress[0]
     res = micro_arb(arb_filename=arb_filename,
                     asc_filename=asc_filename,
                     rda_filename=rda_filename,
