@@ -30,8 +30,8 @@ Installing it also gives you the `tauargus` CLI.
 - **Previews suppression and rounding.** `s` (OPT), `g` (GH hypercube), and
   `r` (RND) run on a throwaway copy of your batch. GH supports flat,
   non-weighted tables and does not enforce protection intervals. Audit before
-  publishing. You inspect the previewed
-  grid, then `y` accepts or `n` cancels. Your working table never changes
+  publishing. RND previews show the rounded responses. You inspect the
+  previewed grid, then `y` accepts or `n` cancels. Your working table never changes
   behind your back, and a preview that is no longer current is flagged.
 - **Audits.** Realised feasibility intervals per cell (`a`).
 - **Shows full errors.** Press `e` to read the last worker error when the

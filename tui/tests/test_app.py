@@ -153,6 +153,31 @@ async def test_round_stages_preview(app):
         assert app.last_action == "RND previewed on table 1"
 
 
+async def test_round_cancel_restores_original_number_and_accept_keeps_rounded(app):
+    from rich.text import Text
+
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _loaded(pilot, app)
+        g = grid(app)
+
+        def shown() -> str:
+            cell = g.get_cell("r0", "c0")
+            assert isinstance(cell, Text)
+            return cell.plain
+
+        original = shown()
+        await pilot.press("r")
+        await wait_for(pilot, lambda: app.preview is not None, what="RND preview")
+        rounded = shown()
+        assert rounded != original
+        await pilot.press("n")
+        assert shown() == original
+        await pilot.press("r")
+        await wait_for(pilot, lambda: app.preview is not None, what="RND preview")
+        await pilot.press("y")
+        assert shown() == rounded
+
+
 async def test_confirm_adopts_preview(app):
     async with app.run_test(size=(120, 35)) as pilot:
         await _loaded(pilot, app)
