@@ -73,6 +73,16 @@ def test_grid_cell_values(session):
             assert cell.symbol in ("S", "U", "P", "M", "E", "?")
 
 
+def test_round_preview_displays_rounded_response_not_original(session):
+    op = SuppressionOp("RND", 1, session.engine._min_round_base(0))
+    rounded = session.preview([op])
+    before = session.grid(0).cells[0][0].value
+    native = rounded.engine._tau.get_table_cell(0, [0, 0], 0)
+    assert native[0] and native[1] != native[2]
+    assert rounded.grid(0).cells[0][0].value == native[2]
+    assert session.grid(0).cells[0][0].value == before
+
+
 def test_grid_total_cell_count(session):
     g = session.grid(0)
     assert sum(len(row) for row in g.cells) == g.tab.n_cells

@@ -33,7 +33,7 @@ _STATUS_NAMES: Dict[int, str] = dict(_cli._STATUS_NAMES)
 # ===========================================================================
 @dataclass(frozen=True)
 class Cell:
-    """One grid cell: the published value plus its cell-status code."""
+    """One grid cell: the displayed value plus its cell-status code."""
 
     value: float
     status: int
@@ -427,7 +427,11 @@ class Session:
         if not res or len(res) < 11 or not res[0]:
             raise RuntimeError(f"cell lookup failed for table {i + 1}, "
                                f"indices {dim}")
-        return Cell(value=float(res[1]), status=int(res[10]))
+        # Match Engine.write_intermediate_table: RND publishes rresp, while
+        # unrounded tables use resp. Cancel returns to the accepted session's
+        # cached grid, so its original response remains unchanged.
+        response = res[2] if i in getattr(eng, "_rounded_tables", ()) else res[1]
+        return Cell(value=float(response), status=int(res[10]))
 
     def _build_grid(self, i: int) -> TableGrid:
         from itertools import product

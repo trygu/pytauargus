@@ -133,7 +133,7 @@ Marks tell the solver which values to guard before you run it.
 | --- | --- | --- |
 | `s` | OPT (cell suppression) | Runs on the whole table, not the cursor cell. The solver chooses the minimum set of cells to hide so that no unsafe (red) cell can be reconstructed from the others. Hidden cells turn yellow. |
 | `g` | GH (hypercube suppression) | Previews GH on a flat, non-weighted table. GH does not enforce quantitative protection intervals. Audit before publishing. |
-| `r` | RND (controlled rounding) | Rounds the table; the rounding base is chosen by the engine. |
+| `r` | RND (controlled rounding) | Rounds the table; the rounding base is chosen by the engine. The preview grid shows rounded responses. Cancel restores the original values; accept keeps the rounded values. |
 
 The preview runs a full batch on a throwaway copy of your `.arb`
 (original spec, then your draft marks, then previously accepted ops, then
