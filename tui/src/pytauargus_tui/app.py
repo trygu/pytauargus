@@ -90,7 +90,7 @@ _STATUS_COLOR = {
 #                       hiding the other cells that would reconstruct it
 #   - secondary (yellow) -> this cell is hidden; p keeps it (do not suppress)
 #   - safe (green)   -> u flags it as a risk the standard rules missed
-_HINT_BASE = "u/p/S=mark s=OPT table r=round a=audit o=export w=save ?=help"
+_HINT_BASE = "u/p/S=mark s=OPT g=GH r=round a=audit o=export w=save ?=help"
 _HINT_PENDING = "y=accept  n=cancel  ?=help"
 _HINT_UNSAFE = "red=sensitive value s=OPT table r=round a=audit o=export w=save ?=help"
 _HINT_SECONDARY = "p=keep this cell s=OPT table r=round a=audit o=export w=save ?=help"
@@ -111,12 +111,15 @@ _HELP_TEXT = """
      ctrl+z / ctrl+y undo / redo your marks (a new mark clears the redo list).
   2. [bold]Preview[/bold] a method (runs on a throwaway copy; the live table is
      untouched until you accept):
-       s = suppress (OPT)    r = round (RND)
+       s = suppress (OPT)    g = hypercube (GH)    r = round (RND)
      [bold]s runs OPT on the whole table[/bold], not the cell under the cursor:
      the solver chooses the minimum set of cells to hide so that no unsafe
      (red) cell can be reconstructed from the others. Hidden cells turn
      [yellow]yellow[/yellow]. Mark cells [red]u[/red] (unsafe) and [cyan]p[/cyan]
      (protect) before you run it so the solver knows which values to guard.
+     GH works on flat, non-weighted tables. It does not enforce protection
+     intervals; audit the result before publishing. Unsupported GH inputs
+     produce an error without changing the accepted result.
   3. [bold]Decide:[/bold]  y = accept (adopt this preview)    n = cancel (discard)
 
 [bold]Cell status colours[/bold] (the number's colour is its status):
@@ -127,7 +130,7 @@ _HELP_TEXT = """
 [bold]Keys:[/bold]  j/k next/prev table · arrows move the cursor ·
   a = audit · o = export the accepted table (.tab) · w = save workspace
   R = write replay batch (headless .arb of the accepted recipe)
-  ? = help · q = quit · ctrl+z = undo edit · ctrl+y = redo edit
+  e = full last error · ? = help · q = quit · ctrl+z = undo edit · ctrl+y = redo edit
 
 [bold]Workspace:[/bold]  w saves a versioned manifest (the recipe, revisions
   and the accepted outcome) next to the .arb — no solver run. Reopen it
@@ -222,6 +225,29 @@ class _HelpScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         yield Static(_HELP_TEXT, id="help")
+
+    def action_close(self) -> None:
+        self.app.pop_screen()
+
+
+class _ErrorScreen(ModalScreen[None]):
+    """Keep the complete last worker error visible beyond the status line."""
+
+    BINDINGS = [Binding("escape", "close", "Close"),
+                Binding("e", "close", "Close", show=False)]
+    CSS = """
+    _ErrorScreen { align-horizontal: center; align-vertical: middle; }
+    _ErrorScreen #error-detail { width: 90%; height: auto; max-height: 90%;
+                                 overflow-y: auto; border: round $error;
+                                 padding: 1 2; }
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__()
+        self._message = message
+
+    def compose(self) -> ComposeResult:
+        yield Static(Text(self._message), id="error-detail")
 
     def action_close(self) -> None:
         self.app.pop_screen()
@@ -328,7 +354,9 @@ class TauArgusApp(App):
         Binding("p", "mark_protect", "Mark P (protect)", show=False),
         Binding("shift+s", "mark_safe", "Mark S (override safe)", show=False),
         Binding("s", "suppress", "Run OPT on this table"),
+        Binding("g", "hypercube", "Preview GH on this table"),
         Binding("r", "round", "Round (RND)"),
+        Binding("e", "error_detail", "Last error", show=False),
         Binding("a", "audit", "Audit"),
         Binding("o", "save", "Export table (.tab)"),
         Binding("w", "workspace_save", "Save workspace"),
@@ -357,6 +385,7 @@ class TauArgusApp(App):
         self._detail = ""
         self._log = "ready"
         self._log_error = False
+        self._last_error: Optional[str] = None
         self._log_handler: Optional[_EngineLogHandler] = None
         # Staged preview state (design §B.3): _pending is the staged op,
         # _preview the throwaway session it produced, _confirmed the ops
@@ -661,6 +690,7 @@ class TauArgusApp(App):
                                           f"on table {self._pending.tab}")
                     self._show_preview_pending()
         elif w.state is WorkerState.ERROR:
+            self._last_error = f"{type(w.error).__name__}: {w.error}"
             if w.description == "restore":
                 self._on_restore_failed(w.error)
                 return  # busy + log handled by the reconciliation
@@ -672,7 +702,7 @@ class TauArgusApp(App):
                 self._preview_revision = None
                 self._set_detail(self._table_detail(
                     self._session.table(self._tab)))
-            self._set_log(f"error: {type(w.error).__name__}: {w.error}",
+            self._set_log(f"error: {self._last_error} (e: full error)",
                           is_error=True)
         if w.state in (WorkerState.SUCCESS, WorkerState.ERROR,
                        WorkerState.CANCELLED):
@@ -745,8 +775,7 @@ class TauArgusApp(App):
         for ri, row in enumerate(g.cells):
             values: List[object] = [Text(g.rows[ri], style="bold")]
             for ci, cell in enumerate(row):
-                dim = ((g.rows[ri], g.cols[ci]) if g.col_var is not None
-                       else (g.rows[ri],))
+                dim = g.dimensions(ri, ci)
                 marker = self._pending_marker(g.tab.index, dim)
                 values.append(self._cell_text(cell, marker))
             grid.add_row(*values, key=f"r{ri}")
@@ -811,14 +840,11 @@ class TauArgusApp(App):
     def _set_cell_detail(self, r: int, c: int) -> None:
         g = self._grid
         cell = g.cells[r][c]
-        pos = f"({g.rows[r]}"
-        if g.col_var is not None:
-            pos += f", {g.cols[c]}"
-        pos += ")"
+        dim = g.dimensions(r, c)
+        pos = f"({', '.join(dim)})"
         text = (f"cell {pos}: value={_fmt(cell.value)}  "
                 f"status={cell.symbol} ({cell.status_name})")
         # Pending draft instruction on this cell (design §B.4).
-        dim = (g.rows[r], g.cols[c]) if g.col_var is not None else (g.rows[r],)
         instr = self._pending_instr.get((g.tab.index, tuple(dim)))
         if instr is not None:
             names = {"U": "require suppression", "S": "override safe",
@@ -840,6 +866,13 @@ class TauArgusApp(App):
 
     def action_round(self) -> None:
         self._stage("RND")
+
+    def action_hypercube(self) -> None:
+        self._stage("GH")
+
+    def action_error_detail(self) -> None:
+        if self._last_error is not None:
+            self.push_screen(_ErrorScreen(self._last_error))
 
     def action_mark_suppress(self) -> None:
         self._mark_cell("U")
@@ -996,7 +1029,9 @@ class TauArgusApp(App):
             base = self._session.engine._min_round_base(tab)
         op = SuppressionOp(kind=kind, tab=tab + 1, rnd_base=base)
         self._pending = op
-        self._set_log(f"table {tab + 1}: previewing {kind} ...")
+        note = (" (flat, non-weighted tables only; audit intervals)"
+                if kind == "GH" else "")
+        self._set_log(f"table {tab + 1}: previewing {kind}{note} ...")
         self._set_busy(True)
         self.run_worker(lambda: self._run_preview(op), group="engine",
                         exclusive=True, thread=True, description="preview",
@@ -1039,8 +1074,7 @@ class TauArgusApp(App):
         if c < 1 or c - 1 >= len(g.cells[r]):
             return  # not on a data cell
         data_c = c - 1
-        dim = ((g.rows[r], g.cols[data_c]) if g.col_var is not None
-               else (g.rows[r],))
+        dim = g.dimensions(r, data_c)
         if self._session.is_total(g.tab.index, dim):
             self._set_log("total cells cannot be marked in this iteration")
             return

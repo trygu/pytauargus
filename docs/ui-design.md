@@ -421,11 +421,10 @@ and materialise data before handing it to widgets (§B.6).
 
 Known differences from the target contracts:
 
-- **Dimensions:** `_build_grid` chooses the first two variables and passes
-  only two indices. There is no complete higher-dimensional slice selector.
-  Until implemented, report unsupported dimensions clearly; do not imply a
-  displayed 2D grid represents all slices. Whole-table summaries must not
-  depend on the visible grid or double-count overlapping margins.
+- **Dimensions:** `_build_grid` displays every full code tuple for tables
+  with three or more dimensions as one row per cell. There is no interactive
+  slice selector yet. The 2D layout remains for two-dimensional tables.
+  Whole-table summaries use the full grid and must not double-count margins.
 - **Recipes:** loading and preview call `run_batch` on the original `.arb`;
   preview then adds instructions and confirmed + staged methods. Imported
   protection/output commands therefore remain executable, and repeated OPT

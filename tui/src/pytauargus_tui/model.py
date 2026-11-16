@@ -28,9 +28,6 @@ from pytauargus_tui import workspace as _ws
 # Full status names (1-14) live in the CLI module (design §B.1 references them).
 _STATUS_NAMES: Dict[int, str] = dict(_cli._STATUS_NAMES)
 
-_CS_EMPTY = 14
-
-
 # ===========================================================================
 # Dataclasses (plain Python — safe for any widget layer)
 # ===========================================================================
@@ -78,6 +75,12 @@ class TableGrid:
     rows: List[str]
     cols: List[str]
     cells: List[List[Cell]]
+    row_dims: List[Tuple[str, ...]] = field(default_factory=list)
+
+    def dimensions(self, row: int, col: int) -> Tuple[str, ...]:
+        """Full ordered code tuple for a displayed data cell."""
+        dims = self.row_dims[row] if self.row_dims else (self.rows[row],)
+        return dims + ((self.cols[col],) if self.col_var is not None else ())
 
 
 # ===========================================================================
@@ -195,7 +198,7 @@ class SuppressionOp:
     ``OPT(n)``, ``MOD(n)``, ``RND(n,base)`` — table numbers are 1-based.
     """
 
-    kind: str  # "OPT" | "MOD" | "RND"
+    kind: str  # "OPT" | "MOD" | "RND" | "GH"
     tab: int  # 1-based table number
     rnd_base: int = 0
 
@@ -421,16 +424,31 @@ class Session:
     def _cell(self, i: int, dim: List[int]) -> Cell:
         eng = self._eng
         res = eng._tau.get_table_cell(i, dim, 0)
-        if not res or len(res) < 11:
-            return Cell(value=0.0, status=_CS_EMPTY)
+        if not res or len(res) < 11 or not res[0]:
+            raise RuntimeError(f"cell lookup failed for table {i + 1}, "
+                               f"indices {dim}")
         return Cell(value=float(res[1]), status=int(res[10]))
 
     def _build_grid(self, i: int) -> TableGrid:
+        from itertools import product
+
         meta = self.table(i)
         exp = list(meta.exp_vars)
         dims_codes = [self._codes_for(name) for name in exp]
 
-        if len(exp) >= 2:
+        if len(exp) > 2:
+            # List every code tuple in the engine's dimension order. A two-
+            # index lookup on a 3+ dimensional table silently reads the wrong
+            # cell (or is rejected by the binding).
+            row_var, col_var = " | ".join(exp), None
+            combinations = list(product(*dims_codes))
+            row_dims = [tuple(label for _ci, label in combo)
+                        for combo in combinations]
+            rows = [" | ".join(dim) for dim in row_dims]
+            cols = []
+            cells = [[self._cell(i, [ci for ci, _label in combo])]
+                     for combo in combinations]
+        elif len(exp) == 2:
             row_var, col_var = exp[0], exp[1]
             rows = [label for _ci, label in dims_codes[0]]
             cols = [label for _ci, label in dims_codes[1]]
@@ -440,6 +458,7 @@ class Session:
                 for cci, _cl in dims_codes[1]:
                     row_cells.append(self._cell(i, [rci, cci]))
                 cells.append(row_cells)
+            row_dims = [(label,) for label in rows]
         else:
             # Single explanatory var: one column.
             row_var = exp[0] if exp else ""
@@ -448,6 +467,7 @@ class Session:
             cells = [
                 [self._cell(i, [rci])] for rci, _label in dims_codes[0]
             ] if exp else [[self._cell(i, [])]]
+            row_dims = [(label,) for label in rows] if exp else [()]
         return TableGrid(
             tab=meta,
             row_var=row_var,
@@ -455,6 +475,7 @@ class Session:
             rows=rows,
             cols=cols if col_var is not None else [],
             cells=cells,
+            row_dims=row_dims,
         )
 
     # -- cache invalidation --------------------------------------------------
