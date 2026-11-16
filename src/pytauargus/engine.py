@@ -1554,6 +1554,11 @@ class Engine:
                 if err != 0:
                     msg += f": {self._rounder.error_string(err)}"
                 raise SolverError(msg, code=err)
+            # CRP returns 0 even for "NO OUTPUT PATTERN EXISTS" and writes
+            # no solution file. Do not misreport that as a core import error.
+            if not os.path.isfile(jj_out) or os.path.getsize(jj_out) == 0:
+                raise SolverError(
+                    f"DoRound produced no output pattern for table {tab + 1}")
             if not self._tau.set_rounded_response(jj_out, tab):
                 raise BatchError(
                     f"SetRoundedResponse failed for table {tab + 1}")

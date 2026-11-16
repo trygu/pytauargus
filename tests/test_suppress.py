@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from pytauargus.batch import Suppress
-from pytauargus.engine import BatchError, run_batch
+from pytauargus.engine import BatchError, SolverError, run_batch
 
 from conftest import DATA
 
@@ -107,6 +107,16 @@ class TestOPTSuppress:
 
 
 class TestRNDSuppress:
+    def test_rnd_infeasible_flat_table_reports_no_output_pattern(self):
+        """CRP can return 0 without a solution file when no pattern exists."""
+        eng = run_batch(DATA / "TestGhFlat.arb")
+        original = eng._tau.get_table_cell(0, [0, 0], 0)[1]
+        base = eng._min_round_base(0)
+        with pytest.raises(SolverError, match="no output pattern.*table 1"):
+            eng.suppress(Suppress(kind="RND", tab_no=1, rnd_base=base))
+        assert 0 not in eng._rounded_tables
+        assert eng._tau.get_table_cell(0, [0, 0], 0)[1] == original
+
     def test_rnd_rounds_without_error(self, engine):
         """RND should run the CRP solver and apply rounded responses cleanly."""
         tau = engine._tau
