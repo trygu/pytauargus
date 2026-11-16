@@ -69,9 +69,44 @@ def test_explore_parquet():
         str(DATA / "examples" / "parquet" / "micro.parquet"))
     assert out["format"] == "parquet"
     assert out["n_rows"] == 8
+    assert out["n_row_groups"] >= 1
+    assert out["data_compressed_bytes"] > 0
+    assert out["data_uncompressed_bytes"] > 0
     by = {v["name"]: v["type"] for v in out["variables"]}
     assert by == {"Sector": "categorical", "Geo": "categorical",
-                  "Value": "numeric"}
+                   "Value": "numeric"}
+
+
+def test_explore_parquet_reads_metadata_only(tmp_path, monkeypatch):
+    pa = pytest.importorskip("pyarrow")
+    import pyarrow.parquet as pq
+    import pytauargus.dataframe as dfmod
+
+    path = tmp_path / "large.parquet"
+    schema = pa.schema([("name", pa.string()), ("value", pa.float64()),
+                        ("flag", pa.bool_()), ("empty", pa.null())])
+    with pq.ParquetWriter(path, schema) as writer:
+        for _ in range(3):
+            writer.write_table(pa.table({"name": ["a", "b"],
+                                         "value": [1.0, 2.0],
+                                         "flag": [True, False],
+                                         "empty": pa.array([None, None], type=pa.null())},
+                                        schema=schema))
+
+    def no_rows(*args, **kwargs):
+        raise AssertionError("explore must not materialize Parquet rows")
+
+    monkeypatch.setattr(dfmod, "to_microdata", no_rows)
+    monkeypatch.setattr(pq, "read_table", no_rows)
+    out = server.tauargus_explore(str(path))
+    assert out["n_rows"] == 6
+    assert out["n_row_groups"] == 3
+    assert out["file_size_bytes"] == path.stat().st_size
+    assert out["data_compressed_bytes"] > 0
+    assert out["data_uncompressed_bytes"] > 0
+    assert {v["name"]: v["type"] for v in out["variables"]} == {
+        "name": "categorical", "value": "numeric", "flag": "numeric",
+        "empty": "numeric"}
 
 
 def test_explore_asc_uses_sibling_rda():
@@ -110,18 +145,42 @@ def test_explore_unsupported_format_raises():
 
 def test_explore_remote_parquet_url_reads_natively(monkeypatch):
     pytest.importorskip("pyarrow")
-    import pytauargus.dataframe as dfmod
+    import pyarrow.parquet as pq
+    monkeypatch.setattr(server, "_parquet_file_size", lambda path: 128)
     seen = []
+
+    class FakeMetadata:
+        num_rows = 2
+        num_row_groups = 1
+        total_byte_size = 64
+        num_columns = 3
+        total_compressed_size = 12
+
+        def row_group(self, index):
+            assert index == 0
+            return self
+
+        def column(self, index):
+            assert index in range(3)
+            return self
 
     def fake(path):
         seen.append(path)
-        return {"Region": ["Os", "Ws"], "Size": ["1", "2"],
-                "Value": [1.0, 2.0]}
-    monkeypatch.setattr(dfmod, "to_microdata", fake)
+        import pyarrow as pa
+        return type("Parquet", (), {"metadata": FakeMetadata(),
+                                     "schema_arrow": pa.schema([
+                                         ("Region", pa.string()),
+                                         ("Size", pa.string()),
+                                         ("Value", pa.float64())])})()
+    monkeypatch.setattr(pq, "ParquetFile", fake)
     url = "s3://bucket/key.parquet"
     out = server.tauargus_explore(url)
     assert out["format"] == "parquet"
     assert out["n_rows"] == 2
+    assert out["n_row_groups"] == 1
+    assert out["data_compressed_bytes"] == 36
+    assert out["data_uncompressed_bytes"] == 64
+    assert out["file_size_bytes"] == 128
     assert seen == [url]  # the URL passed through, not a local path
     by = {v["name"]: v["type"] for v in out["variables"]}
     assert by == {"Region": "categorical", "Size": "categorical",
