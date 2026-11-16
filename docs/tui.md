@@ -58,10 +58,10 @@ opens the chosen file, `q`/`Esc` quits.
 The cursor cell is highlighted; the detail pane and the status-line hint stay
 in sync with it.
 
-The current grid supports one or two explanatory dimensions. It has no slice
-selector for higher-dimensional tables; use the headless tools for those
-tables until full-coordinate views are implemented. Table navigation alone
-does not provide coordinated linked-table protection.
+The grid shows one or two explanatory dimensions as rows and columns. For
+three or more dimensions it lists each full code tuple as a row, with one
+value column. This shows every cell but does not offer a slice selector.
+Table navigation alone does not provide coordinated linked-table protection.
 
 ---
 
@@ -132,6 +132,7 @@ Marks tell the solver which values to guard before you run it.
 | Key | Method | What it does |
 | --- | --- | --- |
 | `s` | OPT (cell suppression) | Runs on the whole table, not the cursor cell. The solver chooses the minimum set of cells to hide so that no unsafe (red) cell can be reconstructed from the others. Hidden cells turn yellow. |
+| `g` | GH (hypercube suppression) | Previews GH on a flat, non-weighted table. GH does not enforce quantitative protection intervals. Audit before publishing. |
 | `r` | RND (controlled rounding) | Rounds the table; the rounding base is chosen by the engine. |
 
 The preview runs a full batch on a throwaway copy of your `.arb`
@@ -148,11 +149,12 @@ can inspect it, and the status line switches to the pending hint.
 - **`y` (accept).** The preview becomes the working session. Its results are
   adopted, your pending marks are promoted to confirmed, the undo history
   resets, and the status line records `acc rN` (the accepted revision).
-  Accepting also feeds later previews. The next `s`/`r` runs on top of what
+  Accepting also feeds later previews. The next `s`/`g`/`r` runs on top of what
   you have accepted so far.
 - **`n` (cancel).** The throwaway is discarded; the live table and your
   draft marks are exactly as they were. A failed preview is dropped to the
-  log automatically.
+  log automatically. Press `e` to read the complete last worker error when
+  the status line is too narrow to show it.
 
 ![Accepted, status line shows acc r2; adopted grid](tui-images/05-accepted.png)
 
@@ -223,7 +225,7 @@ when the terminal is narrow).
 | `arb` | path to the input `.arb`, as recorded |
 | `input_fingerprint` | sha256 of the `.arb` (input-change detection) |
 | `draft_revision` / `accepted_revision` | the revision counters at save time |
-| `confirmed_ops` | accepted method runs: `{kind: OPT\|MOD\|RND, tab, rnd_base}` |
+| `confirmed_ops` | accepted method runs: `{kind: OPT\|MOD\|RND\|GH, tab, rnd_base}` |
 | `confirmed_instructions` / `pending_instructions` | cell marks: `{table, dim: [labels], kind: U\|S\|P}` |
 | `accepted_summary` | per-table status counts of the accepted outcome |
 | `provenance` | `{"pytauargus": <version>}` |
@@ -307,7 +309,7 @@ screenshot below. Close with `?`/`F1`/`Esc`.
 - Grid rendering with status colours for all 14 engine status codes.
 - Live cell detail (value, status, pending mark, audit interval).
 - Draft cell marks `u`/`p`/`S` with toggle/replace semantics, undo/redo.
-- Staged preview of OPT and RND on a throwaway session; per-status delta;
+- Staged preview of OPT, GH and RND on a throwaway session; per-status delta;
   accept (`y`) / cancel (`n`); freshness tracking (fresh/outdated).
 - Audit (realised feasibility intervals) with invalidation on mutation.
 - Export of the accepted table as a legacy `.tab`.

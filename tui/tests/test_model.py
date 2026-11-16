@@ -78,6 +78,57 @@ def test_grid_total_cell_count(session):
     assert sum(len(row) for row in g.cells) == g.tab.n_cells
 
 
+def test_three_dimensional_grid_has_all_cells_and_distinct_code_tuples():
+    from types import SimpleNamespace
+
+    class Tau:
+        def get_total_table_size(self, tab):
+            return True, 8, 0
+
+        def get_var_number_of_codes(self, vi):
+            return True, 2, 2
+
+        def get_var_code(self, vi, ci):
+            return True, 0, ("a", "b")[ci], False, 0
+
+        def get_table_cell(self, tab, dim, topn):
+            return (True, float(dim[0] * 4 + dim[1] * 2 + dim[2]),
+                    *([0] * 8), 1)
+
+    metadata = SimpleNamespace(index_of=lambda name: ("A", "B", "C").index(name),
+                               variables=[SimpleNamespace(tot_code="") for _ in range(3)])
+    eng = SimpleNamespace(_n_tables=1,
+                          _tables=[(SimpleNamespace(exp_vars=("A", "B", "C"),
+                                                           resp_var="value"),
+                                    SimpleNamespace(dom_n=[], dom_k=[], pq_p=[], pq_q=[],
+                                                    pq_n=[], min_freq=[], freq_marge=[],
+                                                    zero_rule=False, apply_weight=False,
+                                                    manual_perc=0))],
+                          metadata=metadata, _tau=Tau())
+    g = Session(eng).grid(0)
+    assert len(g.rows) == 8
+    assert g.col_var is None
+    assert [g.dimensions(r, 0) for r in range(8)] == [
+        (a, b, c) for a in ("a", "b") for b in ("a", "b")
+        for c in ("a", "b")]
+    assert [row[0].value for row in g.cells] == list(map(float, range(8)))
+
+
+def test_gh_suppression_op_uses_python_api_command():
+    op = SuppressionOp("GH", 2)
+    assert op.arb_line() == "<SUPPRESS> GH(2)"
+    assert (op.suppress_cmd().kind, op.suppress_cmd().tab_no) == ("GH", 2)
+
+
+def test_failed_cell_lookup_is_not_displayed_as_empty():
+    from types import SimpleNamespace
+
+    session = Session(SimpleNamespace(_tau=SimpleNamespace(
+        get_table_cell=lambda tab, dim, topn: (False,))))
+    with pytest.raises(RuntimeError, match=r"table 1.*indices.*\[2, 3\]"):
+        session._cell(0, [2, 3])
+
+
 def test_status_names(session):
     g = session.grid(0)
     # The pre-suppression sample batch is fully safe, so the first cell is safe.

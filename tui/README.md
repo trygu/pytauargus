@@ -27,11 +27,15 @@ Installing it also gives you the `tauargus` CLI.
 - **Lets you mark cells before solving.** `u` requires suppression, `p`
   protects (keeps), `S` overrides safe. Marks are instant draft edits with
   toggle/replace and undo/redo; the solver never runs until you ask.
-- **Previews suppression and rounding.** `s` (OPT, whole table) and `r`
-  (RND) run on a throwaway copy of your batch. You inspect the previewed
+- **Previews suppression and rounding.** `s` (OPT), `g` (GH hypercube), and
+  `r` (RND) run on a throwaway copy of your batch. GH supports flat,
+  non-weighted tables and does not enforce protection intervals. Audit before
+  publishing. You inspect the previewed
   grid, then `y` accepts or `n` cancels. Your working table never changes
   behind your back, and a preview that is no longer current is flagged.
 - **Audits.** Realised feasibility intervals per cell (`a`).
+- **Shows full errors.** Press `e` to read the last worker error when the
+  status line is too narrow for its code and message.
 - **Exports.** Writes the accepted table as a legacy `INTERMEDIATE` `.tab`
   file (`o`).
 - **Saves the workspace.** A versioned, fingerprinted JSON manifest of
@@ -51,9 +55,8 @@ Installing it also gives you the `tauargus` CLI.
 
 ## What it can't do (yet)
 
-- **Inspect all dimensions.** The grid uses the first two variables and
-  has no selector for higher-dimensional slices. Use the Python/CLI workflow
-  for higher-dimensional inspection; the grid is not a complete view.
+- **Slice higher-dimensional tables.** The grid lists full code tuples for
+  three or more dimensions, but has no slice selector.
 - **Restore the exact accepted result.** Reopening reruns the recipe.
   The manifest hashes the `.arb`, not referenced data, metadata, hierarchy
   or apriori files; changes in those dependencies are not detected by that hash.

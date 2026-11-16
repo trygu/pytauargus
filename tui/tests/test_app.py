@@ -242,9 +242,10 @@ async def test_second_opt_preview_surfaces_5008(app):
         assert app.busy is False
         # The error carries the exception class and is styled as an
         # error in the status line (not a plain log message). Since the
-        # 0.7.0 error contract the native failure is a typed
-        # TauArgusNativeError (BatchError subclass) with the catalog text.
-        assert "TauArgusNativeError" in app.log_text
+        # The Python API classifies FullJJ as a SolverError (a
+        # TauArgusNativeError subclass); keep that specific type and the
+        # native catalog text visible rather than expecting the base name.
+        assert "SolverError" in app.log_text
         assert "Couldn't load JJ-routines" in app.log_text
         logtext = app.query_one("#logtext", Static)
         assert "error" in logtext.classes
@@ -252,6 +253,59 @@ async def test_second_opt_preview_surfaces_5008(app):
         await pilot.press("ctrl+z")
         await wait_for(pilot, lambda: app.log_text == "nothing to undo")
         assert "error" not in app.query_one("#logtext", Static).classes
+
+
+async def test_full_worker_error_remains_readable_after_status_is_clipped(app):
+    async with app.run_test(size=(60, 35)) as pilot:
+        await _loaded(pilot, app)
+        await pilot.press("s")
+        await wait_for(pilot, lambda: app.preview is not None, what="preview")
+        await pilot.press("y")
+        await pilot.press("s")
+        await wait_for(pilot, lambda: "5008" in app.log_text, what="5008")
+        assert "5008" not in app.status_text  # narrow status may clip it
+        await pilot.press("e")
+        assert "5008" in str(app.screen.query_one("#error-detail", Static).render())
+
+
+async def test_gh_preview_and_accept_uses_python_engine():
+    app = TauArgusApp(DATA / "TestGhFlat.arb")
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _loaded(pilot, app)
+        before = app.session.status_counts(0)
+        await pilot.press("g")
+        await wait_for(pilot, lambda: app.preview is not None, what="GH preview")
+        assert app.session.status_counts(0) == before
+        assert app.preview.status_counts(0) != before
+        await pilot.press("y")
+        assert app.confirmed_ops[-1].kind == "GH"
+        assert app.session.status_counts(0) != before
+
+
+async def test_three_dimensional_grid_marks_full_code_tuple(tmp_path):
+    root = DATA.resolve()
+    arb = tmp_path / "three.arb"
+    arb.write_text(
+        f'<OPENMICRODATA> "{root / "tau_testW.asc"}"\n'
+        f'<OPENMETADATA> "{root / "tau_testW.rda"}"\n'
+        '<SPECIFYTABLE> "Year""Size""Region"|"Var2"||\n'
+        '<SAFETYRULE> NK(2,75)|NK(0,0)\n'
+        '<READMICRODATA>\n<GOINTERACTIVE>\n')
+    app = TauArgusApp(arb)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await wait_for(pilot, lambda: app.session is not None,
+                       what="3D session")
+        await wait_for(pilot, lambda: grid(app).row_count ==
+                       app.session.table(0).n_cells,
+                       what="3D grid")
+        displayed = app.session.grid(0)
+        row = next(r for r in range(len(displayed.rows))
+                   if not app.session.is_total(0, displayed.dimensions(r, 0)))
+        grid(app).move_cursor(row=row, column=1)
+        await pilot.pause()
+        assert all(code in app.detail_text for code in displayed.dimensions(row, 0))
+        await pilot.press("u")
+        assert app.pending_instructions[-1].dim == displayed.dimensions(row, 0)
 
 
 async def test_save_action_writes_tab(app, tmp_path):
