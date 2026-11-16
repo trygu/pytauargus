@@ -26,8 +26,11 @@ Ten tools cover the workflow.
 - **`tauargus_version`** reports the `pytauargus` package version and the
   native engine version.
 - **`tauargus_explore`** inspects a microdata dataset and returns its
-  variables with their types. It reads `.parquet` files directly and
-  `.asc`/`.rda` files through the engine metadata parser.
+  variables with their types. For local or remote `.parquet`, it reads
+  only the schema and row-group metadata: row count, row-group count,
+  whole-file size when available, and compressed and uncompressed
+  row-group byte counts. It does not load the rows. It reads
+  `.asc`/`.rda` through the engine metadata parser.
 - **`tauargus_to_asc_rda`** writes the fixed-width `.asc` data file and
   its `.rda` metadata sidecar from a `.parquet` path or a column dict;
   the pair is what the batch flow runs on. Column roles (response,

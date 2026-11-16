@@ -56,11 +56,28 @@ def _is_url(name: str) -> bool:
     return name.lower().startswith(_URL_PREFIXES)
 
 
+def _parquet_file_size(microdata: str) -> Optional[int]:
+    """Get whole-file bytes when the Parquet filesystem supports stat."""
+    if not _is_url(microdata):
+        return Path(microdata).stat().st_size
+
+    import pyarrow as pa
+    import pyarrow.fs as fs
+
+    try:
+        filesystem, path = fs.FileSystem.from_uri(microdata)
+        size = filesystem.get_file_info(path).size
+        return size if size >= 0 else None
+    except (pa.ArrowException, OSError, ValueError, NotImplementedError):
+        # Some URL schemes support Parquet reads but not filesystem stat.
+        return None
+
+
 def explore_dataset(microdata: str) -> Dict[str, Any]:
     """Inspect a dataset and return its variables with their types.
 
-    ``.parquet`` files are read with :func:`to_microdata` (column types
-    inferred from the values); ``.asc``/``.rda`` files are read through
+    ``.parquet`` schema and row-group metadata are read without loading
+    its rows; ``.asc``/``.rda`` files are read through
     the engine metadata parser, so variable types are the engine ones
     (CATEGORICAL, RESPONSE, WEIGHT, ...). A remote ``s3://``,
     ``s3a://``, ``gs://`` or ``https://`` URL to a ``.parquet`` file is
@@ -81,12 +98,39 @@ def explore_dataset(microdata: str) -> Dict[str, Any]:
     elif not path.is_file():
         raise FileNotFoundError(f"microdata file not found: {path}")
     if suffix == ".parquet":
-        from pytauargus.dataframe import to_microdata
-        micro = to_microdata(microdata)
-        variables = [{"name": name, "type": _parquet_column_type(vals)}
-                     for name, vals in micro.items()]
-        n_rows = len(next(iter(micro.values()))) if micro else 0
-        res = {"path": microdata, "format": "parquet", "n_rows": n_rows,
+        try:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+        except ImportError as exc:
+            raise ImportError(
+                "reading .parquet microdata requires pyarrow; install it "
+                "with `pip install pytauargus[parquet]`") from exc
+
+        parquet = pq.ParquetFile(microdata)
+        metadata = parquet.metadata
+        variables = []
+        for field in parquet.schema_arrow:
+            kind = field.type
+            if pa.types.is_dictionary(kind):
+                kind = kind.value_type
+            # to_microdata normalizes boolean values to integers and
+            # all-null columns have no non-numeric values.
+            numeric = (pa.types.is_integer(kind) or
+                       pa.types.is_floating(kind) or
+                       pa.types.is_boolean(kind) or pa.types.is_null(kind))
+            variables.append({"name": field.name,
+                              "type": "numeric" if numeric else "categorical"})
+        row_groups = [metadata.row_group(i)
+                      for i in range(metadata.num_row_groups)]
+        res = {"path": microdata, "format": "parquet",
+               "n_rows": metadata.num_rows,
+               "n_row_groups": metadata.num_row_groups,
+               "file_size_bytes": _parquet_file_size(microdata),
+               "data_compressed_bytes": sum(
+                   group.column(i).total_compressed_size
+                   for group in row_groups for i in range(group.num_columns)),
+               "data_uncompressed_bytes": sum(
+                   group.total_byte_size for group in row_groups),
                "variables": variables}
         _log("explore", **res)
         return res
@@ -1286,6 +1330,9 @@ carrier of the batch flow.
 
 Workflow (consult the statistician as you go):
 1. tauargus_explore the microdata to learn its variables and types.
+   For Parquet, it also returns row count, row groups and byte sizes
+   from metadata without loading rows; use it for file profiling
+   instead of probing the file with a separate client.
 2. Ask the questions you need before protecting:
    - which table(s) to publish: the explanatory (dimension) variables and
      the numeric response variable;
@@ -1477,7 +1524,7 @@ def tauargus_version() -> Dict[str, str]:
 
 @mcp.tool()
 def tauargus_explore(microdata: str) -> Dict[str, Any]:
-    """Inspect a microdata dataset and return its variables with types.
+    """Inspect a microdata dataset without loading Parquet rows.
 
     ``microdata`` is a path to a ``.parquet`` file, or to the engine
     ``.asc`` fixed-width file (its sibling ``.rda`` metadata is used),
@@ -1485,8 +1532,11 @@ def tauargus_explore(microdata: str) -> Dict[str, Any]:
     ``s3a://``, ``gs://`` or ``https://`` URL to a ``.parquet`` file is
     read natively (cloud credentials come from the environment): pass
     the URL straight in as ``microdata``, do not download the file
-    first. Remote inputs are ``.parquet`` only. Returns the variable
-    names with their types, and the row count for ``.parquet``.
+    first. Remote inputs are ``.parquet`` only. For Parquet, returns
+    variable names with types, row count, row-group count, whole-file
+    size (``file_size_bytes``, null if stat is unavailable), compressed
+    column-data bytes and uncompressed row-group bytes. The latter
+    two byte counts describe row-group data, not the complete file.
     """
     return explore_dataset(microdata)
 
