@@ -117,7 +117,17 @@ class TestRNDSuppress:
         assert 0 not in eng._rounded_tables
         assert eng._tau.get_table_cell(0, [0, 0], 0)[1] == original
 
-    def test_rnd_rounds_without_error(self, engine):
+    def test_rnd_solver_diagnostics_do_not_reach_stdout(self, capfd):
+        """CRP diagnostics go to a temp log, never process stdout."""
+        eng = run_batch(DATA / "TestGhFlat.arb")
+        base = eng._min_round_base(0)
+        with pytest.raises(SolverError, match="no output pattern"):
+            eng.suppress(Suppress(kind="RND", tab_no=1, rnd_base=base))
+        out, _ = capfd.readouterr()
+        assert "Controlled Rounding Solver" not in out
+        assert "NO OUTPUT PATTERN EXISTS" not in out
+
+    def test_rnd_rounds_without_error(self, engine, capfd):
         """RND should run the CRP solver and apply rounded responses cleanly."""
         tau = engine._tau
         tab = 0
@@ -125,6 +135,8 @@ class TestRNDSuppress:
         assert base > 0, "Test requires a positive minimum round base"
 
         engine.suppress(Suppress(kind="RND", tab_no=tab + 1, rnd_base=base))
+        out, _ = capfd.readouterr()
+        assert "Controlled Rounding Solver" not in out
 
         # Rounding must not produce negative cell values.
         _, ncell, _ = tau.get_total_table_size(tab)

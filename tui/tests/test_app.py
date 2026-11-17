@@ -307,8 +307,9 @@ async def test_gh_preview_and_accept_uses_python_engine():
         assert app.session.status_counts(0) != before
 
 
-async def test_gh_flat_rounding_without_pattern_is_not_a_preview():
-    """A no-pattern CRP run has no result to accept or cancel."""
+async def test_gh_flat_rounding_without_pattern_is_not_a_preview(capfd):
+    """A no-pattern CRP run has no result to accept or cancel, and the
+    solver's diagnostics must not write over the TUI's stdout."""
     app = TauArgusApp(DATA / "TestGhFlat.arb")
     async with app.run_test(size=(120, 35)) as pilot:
         await _loaded(pilot, app)
@@ -319,6 +320,9 @@ async def test_gh_flat_rounding_without_pattern_is_not_a_preview():
         assert "SolverError" in app.log_text
         assert app.preview is None and app.pending is None
         assert app.session.grid(0).cells[0][0].value == before
+    out, _ = capfd.readouterr()
+    assert "NO OUTPUT PATTERN EXISTS" not in out
+    assert "Controlled Rounding Solver" not in out
 
 
 async def test_three_dimensional_grid_marks_full_code_tuple(tmp_path):
