@@ -1534,6 +1534,7 @@ class Engine:
             jj_in = os.path.join(tmp, "JJ.IN")
             jj_out = os.path.join(tmp, "JJ.OUT")
             jj_stat = os.path.join(tmp, "JJstat.OUT")
+            crp_log = os.path.join(tmp, "CRP.LOG")
             lo, hi = self._table_cell_bounds(tab)
             if not self._tau.write_jj_format(tab, jj_in, lo, hi, False, False, True):
                 raise BatchError("WriteJJFormat failed for RND")
@@ -1543,11 +1544,13 @@ class Engine:
             self._rounder.set_double_constant(102, 21400000000000.0)  # JJINF
             self._rounder.set_double_constant(103, 0.0001)      # JJMINVIOLA
             self._rounder.set_double_constant(104, 0.01)        # JJMAXSLACK
+            # CRP diagnostics go to a temp log so they never write over
+            # an in-process TUI (or a CLI's captured stdout).
             result, max_jump, n_jump, used, err = self._rounder.do_round(
                 solver="SCIP", in_file=jj_in, base=float(base),
                 upper_bound=[1.0e40], lower_bound=[0.0],
                 solution_file=jj_out, statistics_file=jj_stat,
-                max_time=cmd.rnd_time,
+                max_time=cmd.rnd_time, log_file=crp_log,
             )
             if result > 0:
                 msg = f"DoRound failed (result {result}, err {err})"
